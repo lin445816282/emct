@@ -50,14 +50,83 @@
       </div>
     </div>
 
-    <!-- 因子权重 -->
+    <!-- 策略配置 -->
     <div class="section">
-      <div class="sec-title">⚖️ 因子权重</div>
-      <div class="weight-list">
-        <div v-for="(w, k) in weights" :key="k" class="weight-item">
-          <span class="w-label">{{ weightLabels[k] || k }}</span>
-          <van-progress :percentage="w * 100" stroke-width="6" :show-pivot="false" />
-          <span class="w-val">{{ (w * 100).toFixed(0) }}%</span>
+      <div class="sec-title">⚙️ 策略配置</div>
+
+      <van-tabs v-model:active="configTab" type="card" class="cfg-tabs">
+        <van-tab title="因子权重">
+          <div class="slider-group">
+            <div v-for="k in wKeys" :key="k" class="slider-item">
+              <div class="slider-label">
+                <span>{{ weightLabels[k] }}</span>
+                <span class="w-pct">{{ (wgts[k] * 100).toFixed(0) }}%</span>
+              </div>
+              <van-slider v-model="wgts[k]" :min="0.05" :max="0.35" :step="0.01" bar-height="4px" @update:model-value="autoBalance(k)" />
+            </div>
+            <div class="slider-total" :class="{ ok: totalWeight === 100 }">
+              合计: {{ totalWeight }}% {{ totalWeight === 100 ? '✓' : '⚠ 需=100%' }}
+            </div>
+          </div>
+        </van-tab>
+
+        <van-tab title="信号阀值">
+          <div class="slider-group">
+            <div v-for="(t, k) in cfg.thresholds" :key="k" class="slider-item">
+              <div class="slider-label">
+                <span>{{ tlabels[k] }}</span>
+                <span class="w-pct">{{ t }}</span>
+              </div>
+              <van-slider v-model="cfg.thresholds[k]" :min="k.includes('sell') ? -60 : 0" :max="k.includes('sell') ? -2 : 60" :step="1" bar-height="4px" />
+            </div>
+          </div>
+        </van-tab>
+
+        <van-tab title="风控参数">
+          <div class="slider-group">
+            <div class="slider-item">
+              <div class="slider-label"><span>🐻 熊市因子</span><span class="w-pct">{{ (cfg.bear_factor * 100).toFixed(0) }}%</span></div>
+              <van-slider v-model="cfg.bear_factor" :min="0.1" :max="1.0" :step="0.05" bar-height="4px" />
+            </div>
+            <div class="slider-item">
+              <div class="slider-label"><span>📊 满仓数</span><span class="w-pct">{{ cfg.max_positions }}只</span></div>
+              <van-slider v-model="cfg.max_positions" :min="2" :max="20" :step="1" bar-height="4px" />
+            </div>
+            <div class="slider-item">
+              <div class="slider-label"><span>⚡ 最低评分</span><span class="w-pct">{{ cfg.min_strength }}</span></div>
+              <van-slider v-model="cfg.min_strength" :min="5" :max="25" :step="1" bar-height="4px" />
+            </div>
+            <div class="slider-item">
+              <div class="slider-label"><span>💰 单笔上限</span><span class="w-pct">¥{{ cfg.max_single_amount.toLocaleString() }}</span></div>
+              <van-slider v-model="cfg.max_single_amount" :min="1000" :max="20000" :step="500" bar-height="4px" />
+            </div>
+            <div class="slider-item">
+              <div class="slider-label"><span>🛑 止损线</span><span class="w-pct">{{ cfg.stop_loss_pct }}%</span></div>
+              <van-slider v-model="cfg.stop_loss_pct" :min="-20" :max="-2" :step="1" bar-height="4px" />
+            </div>
+            <div class="slider-item">
+              <div class="slider-label"><span>🎯 止盈线</span><span class="w-pct">{{ cfg.take_profit_pct }}%</span></div>
+              <van-slider v-model="cfg.take_profit_pct" :min="5" :max="30" :step="1" bar-height="4px" />
+            </div>
+            <div class="slider-item">
+              <div class="slider-label"><span>📅 持仓天数</span><span class="w-pct">{{ cfg.max_hold_days }}天</span></div>
+              <van-slider v-model="cfg.max_hold_days" :min="3" :max="20" :step="1" bar-height="4px" />
+            </div>
+          </div>
+        </van-tab>
+      </van-tabs>
+
+      <div class="cfg-actions">
+        <van-button size="small" type="primary" :loading="saving" @click="doSaveCfg">💾 保存</van-button>
+        <van-button size="small" type="warning" :loading="optimizing" @click="doOptimize">🤖 AI优化</van-button>
+        <van-button size="small" plain @click="doResetCfg">🔄 默认</van-button>
+      </div>
+
+      <div class="opt-result" v-if="optResult">
+        <div class="opt-title">{{ optResult.reason || 'AI优化建议' }}</div>
+        <div class="opt-actions">
+          <van-button size="small" type="success" @click="applyOptimize">✅ 应用</van-button>
+          <van-button size="small" plain @click="optResult = null">忽略</van-button>
         </div>
       </div>
     </div>
@@ -77,7 +146,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { stockPool } from '../api/index.js'
 import { showToast } from 'vant'
 
@@ -92,13 +161,26 @@ const adding = ref(false)
 const poolForm = ref({ code: '', name: '', market: 'SH', sector: '' })
 
 const weights = ref({})
+const wKeys = ['ma_trend', 'macd', 'rsi', 'bollinger', 'volume', 'momentum']
+const wgts = ref({})
+const configTab = ref(0)
+const saving = ref(false), optimizing = ref(false), resetting = ref(false)
+const optResult = ref(null)
+
+const cfg = ref({
+  thresholds: { strong_buy: 28, buy: 10, sell: -10, strong_sell: -28 },
+  bear_factor: 0.5, max_positions: 8, min_strength: 10,
+  max_single_amount: 5000, stop_loss_pct: -8, take_profit_pct: 15, max_hold_days: 10
+})
+
+const tlabels = { strong_buy: '强烈买入', buy: '买入', sell: '卖出', strong_sell: '强烈卖出' }
 
 const weightLabels = {
   ma_trend: '均线趋势', macd: 'MACD', rsi: 'RSI',
   bollinger: '布林带', volume: '量价', momentum: '动量',
 }
 
-onMounted(() => { loadData(); loadWeights() })
+onMounted(() => { loadData(); loadCfg() })
 
 async function loadData() {
   const [pool, stats] = await Promise.all([
@@ -109,11 +191,88 @@ async function loadData() {
   dataStats.value = stats
 }
 
-async function loadWeights() {
+// ── 策略配置 ──
+const totalWeight = computed(() => Math.round(Object.values(wgts.value).reduce((a, b) => a + b, 0) * 100))
+
+function autoBalance(changed) {
+  const others = wKeys.filter(k => k !== changed)
+  const current = Object.values(wgts.value).reduce((a, b) => a + b, 0)
+  const target = 0.18 * (wKeys.length - 1) // 其余默认值
+  const diff = (current - wgts.value[changed]) - target
+  others.forEach(k => { wgts.value[k] = Math.round((wgts.value[k] - diff / others.length) * 100) / 100 })
+  // 归一化
+  const sum = Object.values(wgts.value).reduce((a, b) => a + b, 0)
+  if (sum > 0) wKeys.forEach(k => { wgts.value[k] = Math.round(wgts.value[k] / sum * 100) / 100 })
+}
+
+async function loadCfg() {
   try {
-    const r = await fetch('/emct/api/signals/weights')
-    if (r.ok) weights.value = await r.json()
-  } catch { /* weights API may not exist yet */ }
+    const r = await fetch('/emct/api/strategy/config')
+    if (r.ok) {
+      const data = await r.json()
+      wgts.value = { ...data.weights }
+      cfg.value = { ...data, weights: undefined, thresholds: { ...data.thresholds } }
+    }
+  } catch (e) {
+    // fallback to loaded weights
+    wgts.value = { ...weights.value }
+  }
+}
+
+async function doSaveCfg() {
+  saving.value = true
+  try {
+    const payload = {
+      ...cfg.value,
+      weights: { ...wgts.value }
+    }
+    const r = await fetch('/emct/api/strategy/config', {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    })
+    const data = await r.json()
+    if (data.ok) showToast('配置已保存')
+    else showToast('保存失败: ' + (data.error || ''))
+  } catch { showToast('网络错误') }
+  saving.value = false
+}
+
+async function doOptimize() {
+  optimizing.value = true
+  optResult.value = null
+  try {
+    const r = await fetch('/emct/api/strategy/optimize', { method: 'POST' })
+    const data = await r.json()
+    if (data.suggestion) {
+      optResult.value = data
+    } else {
+      showToast(data.error || '无可优化建议')
+    }
+  } catch { showToast('优化失败') }
+  optimizing.value = false
+}
+
+function applyOptimize() {
+  if (!optResult.value?.suggestion) return
+  const { weights: w, ...rest } = optResult.value.suggestion
+  if (w) wgts.value = { ...w }
+  cfg.value = { ...cfg.value, ...rest, thresholds: rest.thresholds || cfg.value.thresholds }
+  optResult.value = null
+  showToast('已应用优化配置')
+}
+
+async function doResetCfg() {
+  resetting.value = true
+  try {
+    const r = await fetch('/emct/api/strategy/reset', { method: 'POST' })
+    const data = await r.json()
+    if (data.ok) {
+      wgts.value = { ...data.weights }
+      cfg.value = { ...data, weights: undefined, thresholds: { ...data.thresholds } }
+      showToast('已恢复默认')
+    }
+  } catch { showToast('复位失败') }
+  resetting.value = false
 }
 
 async function doSync() {
@@ -208,6 +367,20 @@ async function doRemove(code) {
 .weight-item { display: flex; align-items: center; gap: 8px; }
 .w-label { font-size: 12px; color: #666; min-width: 56px; }
 .w-val { font-size: 12px; color: #333; min-width: 32px; text-align: right; }
+
+/* 策略配置 */
+.cfg-tabs { margin-bottom: 10px; }
+.slider-group { padding: 4px 0; }
+.slider-item { margin-bottom: 12px; }
+.slider-label { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #333; margin-bottom: 4px; }
+.slider-label .w-pct { font-weight: 600; color: #1989fa; }
+.slider-total { text-align: center; font-size: 13px; color: #ee0a24; margin-top: 6px; }
+.slider-total.ok { color: #07c160; }
+.slider-score { font-size: 11px; min-width: 36px; text-align: right; }
+.cfg-actions { display: flex; gap: 8px; margin-top: 12px; justify-content: center; }
+.opt-result { margin-top: 10px; padding: 10px; background: #f8f9fb; border-radius: 6px; }
+.opt-title { font-size: 13px; color: #333; margin-bottom: 8px; white-space: pre-wrap; }
+.opt-actions { display: flex; gap: 8px; }
 
 .pool-form { padding: 16px; }
 .pop-title { font-size: 15px; font-weight: 700; margin-bottom: 12px; text-align: center; }

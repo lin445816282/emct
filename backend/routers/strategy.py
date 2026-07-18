@@ -10,11 +10,17 @@ router = APIRouter(prefix="/strategy", tags=["strategy"])
 def api_get_config():
     """获取完整策略配置"""
     c = get_config()
-    # 返回时附带版本号和默认值对比信息
     return {
-        "data": c,
+        "weights": c.get("weights", {}),
+        "thresholds": c.get("thresholds", {}),
+        "bear_factor": c.get("bear_factor", 0.5),
+        "max_positions": c.get("max_positions", 8),
+        "min_strength": c.get("min_strength", 10),
+        "max_single_amount": c.get("max_single_amount", 5000),
+        "stop_loss_pct": c.get("stop_loss_pct", -8),
+        "take_profit_pct": c.get("take_profit_pct", 15),
+        "max_hold_days": c.get("max_hold_days", 10),
         "version": _get_version(),
-        "defaults": _get_defaults_for_frontend(),
     }
 
 
@@ -24,14 +30,22 @@ def api_update_config(data: dict):
     current = get_config()
     merged = _deep_merge(current, data)
     saved = save_config(merged)
-    return {"ok": True, "data": saved, "version": _get_version()}
+    return {"ok": True, "weights": saved.get("weights",{}), "thresholds": saved.get("thresholds",{}),
+            "bear_factor": saved.get("bear_factor"), "max_positions": saved.get("max_positions"),
+            "min_strength": saved.get("min_strength"), "max_single_amount": saved.get("max_single_amount"),
+            "stop_loss_pct": saved.get("stop_loss_pct"), "take_profit_pct": saved.get("take_profit_pct"),
+            "max_hold_days": saved.get("max_hold_days"), "version": _get_version()}
 
 
 @router.post("/reset")
 def api_reset_config():
     """恢复默认配置"""
     saved = reset_config()
-    return {"ok": True, "data": saved, "message": "已恢复默认配置"}
+    return {"ok": True, "weights": saved.get("weights",{}), "thresholds": saved.get("thresholds",{}),
+            "bear_factor": saved.get("bear_factor"), "max_positions": saved.get("max_positions"),
+            "min_strength": saved.get("min_strength"), "max_single_amount": saved.get("max_single_amount"),
+            "stop_loss_pct": saved.get("stop_loss_pct"), "take_profit_pct": saved.get("take_profit_pct"),
+            "max_hold_days": saved.get("max_hold_days"), "message": "已恢复默认配置"}
 
 
 @router.post("/optimize")

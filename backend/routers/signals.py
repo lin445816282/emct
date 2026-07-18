@@ -111,19 +111,34 @@ def expire_signal(signal_id: int):
 
 @router.get("/weights")
 def get_weights():
-    """获取当前因子权重"""
-    return {k: round(v, 3) for k, v in WEIGHTS.items()}
+    """获取当前因子权重（从 DB 读取）"""
+    try:
+        from strategy_config import get_weights as _gw
+        return {k: round(v, 3) for k, v in _gw().items()}
+    except Exception:
+        return {k: round(v, 3) for k, v in WEIGHTS.items()}
 
 
 @router.put("/weights")
 def update_weights(weights: dict):
-    """手动设置因子权重（需均等归一化）"""
+    """手动设置因子权重（自动归一化 + 持久化）"""
     total = sum(weights.values())
     if total <= 0:
         return {"ok": False, "error": "权重和必须>0"}
     for k, v in weights.items():
         if k in WEIGHTS:
             WEIGHTS[k] = round(v / total, 4)
+    # 持久化到 DB
+    try:
+        from strategy_config import save_config
+        cfg = {}
+        try:
+            from strategy_config import get_config; cfg = get_config()
+        except: pass
+        cfg["weights"] = {k: round(v, 3) for k, v in WEIGHTS.items()}
+        save_config(cfg)
+    except Exception as e:
+        return {"ok": True, "weights": {k: round(v, 3) for k, v in WEIGHTS.items()}, "warning": f"DB保存失败: {e}"}
     return {"ok": True, "weights": {k: round(v, 3) for k, v in WEIGHTS.items()}}
 
 

@@ -503,11 +503,12 @@ def auto_stop_check() -> dict:
             (price, mv, pnl, pnl_pct, pos["id"])
         )
 
-        # 止损 -8% 或 止盈 +15%
+        # 止损 / 止盈（从策略配置读取）
+        risk = _get_risk_params()
         trigger = None
-        if pnl_pct <= -8:
+        if pnl_pct <= risk["stop_loss_pct"]:
             trigger = f"止损 {pnl_pct}%"
-        elif pnl_pct >= 15:
+        elif pnl_pct >= risk["take_profit_pct"]:
             trigger = f"止盈 {pnl_pct}%"
 
         if trigger:
@@ -685,17 +686,17 @@ def auto_exit_check() -> dict:
             except:
                 pass
 
-        # 止损
-        if pnl_pct <= -8:
+        # 止损/止盈（从策略配置读取）
+        risk = _get_risk_params()
+        if pnl_pct <= risk["stop_loss_pct"]:
             trigger = f"止损 {pnl_pct}%"
-        # 止盈
-        elif pnl_pct >= 15:
+        elif pnl_pct >= risk["take_profit_pct"]:
             trigger = f"止盈 {pnl_pct}%"
         # T+1 次日平仓：买入次日15:05强制卖出
         elif hold_days >= 1:
             trigger = f"T+1平仓({hold_days}天)"
         # 到期
-        elif hold_days >= 10:
+        elif hold_days >= risk.get("max_hold_days", 10):
             trigger = f"到期({hold_days}天)"
         # 信号反转
         else:
@@ -855,7 +856,8 @@ def auto_trade_from_signals() -> dict:
         except:
             total = strength
 
-        if strength < 10 or total < 10:
+        risk = _get_risk_params()
+        if strength < risk["min_strength"] or total < risk["min_strength"]:
             skipped.append({"code": code, "name": name, "reason": f"评分不足 {total:.1f}"})
             continue
 
@@ -882,7 +884,8 @@ def auto_trade_from_signals() -> dict:
         # 仓位计算
         vol = get_volatility(code)
         vol_factor = min(1.5, max(0.3, 0.30 / vol)) if vol is not None else 1.0
-        trade_amount = min(cash * 0.2, 5000) * vol_factor * drawdown_factor * bear_factor
+        risk = _get_risk_params()
+        trade_amount = min(cash * 0.2, risk["max_single_amount"]) * vol_factor * drawdown_factor * bear_factor
         volume = max(100, int(trade_amount / price / 100) * 100)
         amount = round(price * volume, 2)
 
@@ -1015,7 +1018,8 @@ def auto_trade_open(date: str = None) -> dict:
         price = float(open_row["open"])
 
         # 计算仓位置（简化：不复用波动率因子，直接用固定公式）
-        trade_amount = min(cash * 0.2, 5000) * drawdown_factor * bear_factor
+        risk = _get_risk_params()
+        trade_amount = min(cash * 0.2, risk["max_single_amount"]) * drawdown_factor * bear_factor
         volume = max(100, int(trade_amount / price / 100) * 100)
         amount = round(price * volume, 2)
 
