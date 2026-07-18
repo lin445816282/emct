@@ -7,7 +7,7 @@ import App from './App.vue'
 import 'vant/lib/index.css'
 import { Button, Tab, Tabs, Card, Tag, Cell, CellGroup, Field, Form,
          Popup, Dialog, Notify, Toast, Empty, NavBar, Loading, Switch,
-         Tabbar, TabbarItem, Progress } from 'vant'
+         Tabbar, TabbarItem, Progress, Slider } from 'vant'
 
 import Dashboard from './views/Dashboard.vue'
 import Signals from './views/Signals.vue'
@@ -35,7 +35,7 @@ const app = createApp(App)
 // 注册Vant组件
 ;[Button, Tab, Tabs, Card, Tag, Cell, CellGroup, Field, Form,
   Popup, Dialog, Notify, Toast, Empty, NavBar, Loading, Switch,
-  Tabbar, TabbarItem, Progress
+  Tabbar, TabbarItem, Progress, Slider
 ].forEach(c => app.use(c))
 
 app.use(router).use(pinia).mount('#app')
