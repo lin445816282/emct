@@ -108,6 +108,14 @@ def init_db():
             cookies TEXT DEFAULT ''
         );
 
+        -- 策略配置
+        CREATE TABLE IF NOT EXISTS strategy_config (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            data TEXT NOT NULL,
+            updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
+            version INTEGER NOT NULL DEFAULT 1
+        );
+
         -- 模拟交易账户
         CREATE TABLE IF NOT EXISTS sim_account (
             id INTEGER PRIMARY KEY AUTOINCREMENT,

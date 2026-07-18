@@ -1,0 +1,97 @@
+<template>
+  <div class="settings-page">
+    ...
+
+    <!-- 策略配置 -->
+    <div class="section">
+      <div class="sec-title">⚙️ 策略配置</div>
+
+      <!-- Tab: 权重 / 阀值 / 风控 -->
+      <van-tabs v-model:active="configTab" type="card" class="cfg-tabs">
+        <van-tab title="因子权重">
+          <div class="slider-group">
+            <div v-for="(k, i) in Object.keys(wgts)" :key="k" class="slider-item">
+              <div class="slider-label">
+                <span>{{ wlabels[k] }}</span>
+                <span>{{ (wgts[k] * 100).toFixed(0) }}%</span>
+                <span class="slider-score" v-if="wScores[k] !== undefined" :style="{ color: wScores[k] >= 0 ? '#07c160' : '#ee0a24' }">{{ fmtScore(wScores[k]) }}</span>
+              </div>
+              <van-slider
+                v-model="wgts[k]"
+                :min="0.05" :max="0.35" :step="0.01"
+                bar-height="4px"
+                @update:model-value="(v) => autoBalance(k, +v)"
+              />
+            </div>
+            <div class="slider-total">合计: {{ totalWeight }}%（{{ totalWeight === 100 ? '✓' : '需=100%' }}）</div>
+          </div>
+        </van-tab>
+
+        <van-tab title="信号阀值">
+          <div class="slider-group">
+            <div v-for="(t, k) in cfg.thresholds" :key="k" class="slider-item">
+              <div class="slider-label">
+                <span>{{ tlabels[k] }}</span>
+                <span class="threshold-val">{{ t }}</span>
+              </div>
+              <van-slider
+                v-model="cfg.thresholds[k]"
+                :min="k.includes('sell') ? -60 : 0"
+                :max="k.includes('sell') ? -2 : 60"
+                :step="1"
+                bar-height="4px"
+              />
+            </div>
+          </div>
+        </van-tab>
+
+        <van-tab title="风控参数">
+          <div class="slider-group">
+            <div class="slider-item">
+              <div class="slider-label"><span>🐻 熊市因子</span><span>{{ (cfg.bear_factor * 100).toFixed(0) }}%</span></div>
+              <van-slider v-model="cfg.bear_factor" :min="0.1" :max="1.0" :step="0.05" bar-height="4px" />
+            </div>
+            <div class="slider-item">
+              <div class="slider-label"><span>📊 满仓数</span><span>{{ cfg.max_positions }}只</span></div>
+              <van-slider v-model="cfg.max_positions" :min="2" :max="20" :step="1" bar-height="4px" />
+            </div>
+            <div class="slider-item">
+              <div class="slider-label"><span>⚡ 最低评分</span><span>{{ cfg.min_strength }}</span></div>
+              <van-slider v-model="cfg.min_strength" :min="5" :max="20" :step="1" bar-height="4px" />
+            </div>
+            <div class="slider-item">
+              <div class="slider-label"><span>💰 单笔上限</span><span>¥{{ cfg.max_single_amount.toLocaleString() }}</span></div>
+              <van-slider v-model="cfg.max_single_amount" :min="1000" :max="20000" :step="500" bar-height="4px" />
+            </div>
+            <div class="slider-item">
+              <div class="slider-label"><span>🛑 止损线</span><span>{{ cfg.stop_loss_pct }}%</span></div>
+              <van-slider v-model="cfg.stop_loss_pct" :min="-20" :max="-2" :step="1" bar-height="4px" />
+            </div>
+            <div class="slider-item">
+              <div class="slider-label"><span>🎯 止盈线</span><span>{{ cfg.take_profit_pct }}%</span></div>
+              <van-slider v-model="cfg.take_profit_pct" :min="5" :max="30" :step="1" bar-height="4px" />
+            </div>
+            <div class="slider-item">
+              <div class="slider-label"><span>📅 持仓天数</span><span>{{ cfg.max_hold_days }}天</span></div>
+              <van-slider v-model="cfg.max_hold_days" :min="3" :max="20" :step="1" bar-height="4px" />
+            </div>
+          </div>
+        </van-tab>
+      </van-tabs>
+
+      <!-- 操作按钮 -->
+      <div class="cfg-actions">
+        <van-button size="small" type="primary" :loading="saving" @click="doSave">💾 保存</van-button>
+        <van-button size="small" type="warning" :loading="optimizing" @click="doOptimize">🤖 AI优化</van-button>
+        <van-button size="small" plain :loading="resetting" @click="doReset">🔄 默认</van-button>
+      </div>
+
+      <div class="opt-result" v-if="optResult">
+        <div class="opt-title">{{ optResult.reason || 'AI优化建议' }}</div>
+        <van-button size="small" type="success" @click="applyOptimize">应用此配置</van-button>
+      </div>
+    </div>
+
+    ...
+  </div>
+</template>

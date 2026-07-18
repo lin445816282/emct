@@ -160,9 +160,15 @@ const showPoolAdd = ref(false)
 const adding = ref(false)
 const poolForm = ref({ code: '', name: '', market: 'SH', sector: '' })
 
-const weights = ref({})
+const weights = ref({
+  ma_trend: 0.18, macd: 0.18, rsi: 0.14,
+  bollinger: 0.17, volume: 0.17, momentum: 0.16
+})
 const wKeys = ['ma_trend', 'macd', 'rsi', 'bollinger', 'volume', 'momentum']
-const wgts = ref({})
+const wgts = ref({
+  ma_trend: 0.18, macd: 0.18, rsi: 0.14,
+  bollinger: 0.17, volume: 0.17, momentum: 0.16
+})
 const configTab = ref(0)
 const saving = ref(false), optimizing = ref(false), resetting = ref(false)
 const optResult = ref(null)
