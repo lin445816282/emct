@@ -91,8 +91,19 @@ def get_stats() -> dict:
     result = dict(stats) if stats else {}
     closed = result.get("closed_trades", 0) or 0
     wins = result.get("wins", 0) or 0
+    losses = result.get("losses", 0) or 0
+    breakeven = result.get("breakeven", 0) or 0
 
-    result["win_rate"] = round(wins / closed * 100, 1) if closed > 0 else 0
+    # 胜率区分显示
+    if closed == 0:
+        display_win_rate = "--"
+    elif wins + losses == 0:
+        display_win_rate = "平盘"
+    else:
+        display_win_rate = f"{round(wins / closed * 100, 1)}%"
+    
+    result["win_rate"] = display_win_rate
+    result["win_rate_num"] = round(wins / closed * 100, 1) if closed > 0 else 0
     result["profit_factor"] = _calc_profit_factor(db) if closed > 0 else 0
 
     db.close()

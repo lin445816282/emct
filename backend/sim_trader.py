@@ -4,6 +4,26 @@ EMCT — 模拟交易引擎
 """
 from database import get_db, init_db
 from datetime import datetime
+from analyzer import analyze_stock
+
+
+def _get_max_positions() -> int:
+    """从 DB 策略配置读取满仓数，fallback 8"""
+    try:
+        from strategy_config import get_max_positions as gmp
+        return gmp()
+    except Exception:
+        return 8
+
+
+def _get_risk_params() -> dict:
+    """从 DB 策略配置读取风控参数"""
+    try:
+        from strategy_config import get_risk_params as grp
+        return grp()
+    except Exception:
+        return {"min_strength": 10, "max_single_amount": 5000,
+                "stop_loss_pct": -8, "take_profit_pct": 15, "max_hold_days": 10}
 
 
 # ── 账户 ──
@@ -141,8 +161,10 @@ def _check_sim_risk(db, code: str, direction: str, price: float, volume: int) ->
 
 # ── 下单执行 ──
 
-def execute_buy(order_id: int) -> dict:
-    """模拟买入成交（交易时间内+真实日线价格）"""
+def execute_buy(order_id: int, skip_time_check: bool = False, use_open: bool = False) -> dict:
+    """模拟买入成交（真实日线价格）
+    skip_time_check=True 用于 cron 自动跟单（超出交易时间）
+    use_open=True 使用开盘价而非收盘价"""
     db = get_db()
     order = db.execute("SELECT * FROM orders WHERE id=? AND sim_mode=1", (order_id,)).fetchone()
     if not order:
@@ -153,22 +175,24 @@ def execute_buy(order_id: int) -> dict:
         db.close()
         return {"ok": False, "error": f"订单状态 {order['order_status']} 不可执行"}
 
-    # ✅ 交易时间检查
-    ok, reason = _is_trading_time()
-    if not ok:
-        db.close()
-        return {"ok": False, "error": reason}
+    # ✅ 交易时间检查（auto_trade可跳过）
+    if not skip_time_check:
+        ok, reason = _is_trading_time()
+        if not ok:
+            db.close()
+            return {"ok": False, "error": reason}
 
     code = order["code"]
     name = order["name"] or order["code"]
     # ✅ 用真实日线价格（复用db连接，避免死锁）
+    price_col = "open" if use_open else "close"
     price_row = db.execute(
-        "SELECT close FROM daily_kline WHERE code=? ORDER BY date DESC LIMIT 1", (code,)
+        f"SELECT {price_col} FROM daily_kline WHERE code=? ORDER BY date DESC LIMIT 1", (code,)
     ).fetchone()
-    if not price_row or not price_row["close"]:
+    if not price_row or not price_row[price_col]:
         db.close()
         return {"ok": False, "error": f"{code} 无日线数据"}
-    price = float(price_row["close"])
+    price = float(price_row[price_col])
     volume = order["volume"]
     amount = round(price * volume, 2)
 
@@ -355,21 +379,80 @@ def get_sim_orders(limit: int = 30) -> list[dict]:
     db.close()
     return [dict(r) for r in rows]
 
+def _sina_code(code: str) -> str:
+    """转换股票代码为新浪格式：sh600887 / sz000001"""
+    if code.startswith("6"):
+        return "sh" + code
+    return "sz" + code
+
+
+def _get_realtime_prices(codes: list) -> dict:
+    """批量获取新浪实时行情 → {code: price}"""
+    import requests
+    sina_codes = [_sina_code(c) for c in codes]
+    url = "http://hq.sinajs.cn/list=" + ",".join(sina_codes)
+    headers = {"Referer": "https://finance.sina.com.cn"}
+    try:
+        r = requests.get(url, headers=headers, timeout=5)
+        if r.status_code != 200:
+            return {}
+    except Exception:
+        return {}
+
+    prices = {}
+    for line in r.text.strip().split("\n"):
+        if "=" not in line:
+            continue
+        raw = line.split('"')[1] if '"' in line else ""
+        parts = raw.split(",")
+        if len(parts) < 4:
+            continue
+        try:
+            price = float(parts[3])  # 当前价
+            if price > 0:
+                # 反查 code（去掉 sh/sz 前缀）
+                code = parts[0]  # 名称
+                # 从新浪代码反推: sh600887 → 600887
+                key = line.split("=")[0].replace("var hq_str_", "")
+                real_code = key[2:]  # 去掉 sh/sz
+                prices[real_code] = price
+        except (ValueError, IndexError):
+            continue
+    return prices
+
+
 def refresh_prices() -> dict:
-    """用日线最新收盘价刷新所有模拟持仓市值"""
+    """刷新持仓市值：交易时间用新浪实时价，否则用日线收盘价"""
     db = get_db()
     positions = db.execute(
         "SELECT * FROM positions WHERE sim_mode=1 AND volume > 0"
     ).fetchall()
+
+    if not positions:
+        db.close()
+        return {"ok": True, "updated": 0}
+
+    # 交易时间 → 尝试实时行情
+    is_trading, _ = _is_trading_time()
+    realtime = {}
+    if is_trading:
+        codes = [p["code"] for p in positions]
+        realtime = _get_realtime_prices(codes)
+
     updated = 0
     for pos in positions:
-        row = db.execute(
-            "SELECT close FROM daily_kline WHERE code=? ORDER BY date DESC LIMIT 1",
-            (pos["code"],)
-        ).fetchone()
-        if not row or not row["close"]:
-            continue
-        price = row["close"]
+        code = pos["code"]
+        if code in realtime:
+            price = realtime[code]
+        else:
+            row = db.execute(
+                "SELECT close FROM daily_kline WHERE code=? ORDER BY date DESC LIMIT 1",
+                (code,)
+            ).fetchone()
+            if not row or not row["close"]:
+                continue
+            price = row["close"]
+
         mv = round(price * pos["volume"], 2)
         pnl = round(pos["volume"] * (price - pos["avg_cost"]), 2)
         pnl_pct = round((price - pos["avg_cost"]) / pos["avg_cost"] * 100, 2) if pos["avg_cost"] else 0
@@ -380,9 +463,10 @@ def refresh_prices() -> dict:
             (price, mv, pnl, pnl_pct, pos["id"])
         )
         updated += 1
+
     db.commit()
     db.close()
-    return {"ok": True, "updated": updated}
+    return {"ok": True, "updated": updated, "realtime": len(realtime) > 0}
 
 
 def auto_stop_check() -> dict:
@@ -532,9 +616,15 @@ def auto_exit_check() -> dict:
     智能退出引擎（对齐回测逻辑）：
     - 止损：浮亏 ≤ -8%
     - 止盈：浮盈 ≥ +15%
+    - T+1次日平仓：买入隔日15:05强制卖出
     - 到期：持有 ≥ 10 个交易日
     - 信号反转：今日信号变为 sell/strong_sell
     """
+    from datetime import datetime
+    now = datetime.now()
+    if now.weekday() >= 5:
+        return {"ok": True, "sold": 0, "msg": "周末休市，跳过退出检查"}
+
     db = get_db()
     today = datetime.now().strftime("%Y-%m-%d")
 
@@ -601,6 +691,9 @@ def auto_exit_check() -> dict:
         # 止盈
         elif pnl_pct >= 15:
             trigger = f"止盈 {pnl_pct}%"
+        # T+1 次日平仓：买入次日15:05强制卖出
+        elif hold_days >= 1:
+            trigger = f"T+1平仓({hold_days}天)"
         # 到期
         elif hold_days >= 10:
             trigger = f"到期({hold_days}天)"
@@ -664,18 +757,19 @@ def auto_exit_check() -> dict:
 def auto_trade_from_signals() -> dict:
     """
     自动跟单：读取今天 pending 的买入信号，自动下单成交。
+    分两阶段：①信号过滤+创建订单 ②统一走 execute_buy 执行
     规则：
     - 先检查市场趋势（熊市/暴跌暂停开仓）
     - 组合最大回撤 >10% → 熔断暂停
-    - 只跟 strong_buy / buy 信号（评分≥25）
+    - 只跟 strong_buy / buy 信号（评分≥10）
     - 已有持仓的票跳过，同板块不重复买
     - 仓位按波动率调整（高波少买，低波多买）
     - 最多持有 5 只，单票基准：现金 20% 或 ¥5000
     """
     from benchmark import market_regime_ok
 
-    # 市场趋势过滤
-    market_ok, market_msg = market_regime_ok()
+    # 市场趋势过滤（v2：熊市允许轻仓10%，恐慌日才暂停）
+    market_ok, market_msg, bear_factor = market_regime_ok()
     if not market_ok:
         return {"ok": True, "traded": 0, "msg": f"市场过滤: {market_msg}"}
 
@@ -689,9 +783,6 @@ def auto_trade_from_signals() -> dict:
         if total_pnl_pct <= -10:
             db.close()
             return {"ok": True, "traded": 0, "msg": f"🔴 熔断！组合回撤 {total_pnl_pct:.1f}% ≤ -10%，暂停开仓"}
-        if total_pnl_pct <= -5:
-            # 回撤警告但继续，仓位减半
-            pass  # 下面处理
 
     # 1. 查信号
     rows = db.execute(
@@ -722,7 +813,7 @@ def auto_trade_from_signals() -> dict:
 
     # 4. 已开仓数
     open_cnt = len(held_codes)
-    max_new = 5 - open_cnt
+    max_new = _get_max_positions() - open_cnt
     if max_new <= 0:
         db.close()
         return {"ok": True, "traded": 0, "msg": f"已满仓({open_cnt}只)，不再开新仓"}
@@ -741,13 +832,14 @@ def auto_trade_from_signals() -> dict:
         returns = [(closes[i] - closes[i-1]) / closes[i-1] for i in range(1, len(closes))]
         import math
         daily_vol = (sum(r**2 for r in returns) / len(returns)) ** 0.5
-        return daily_vol * math.sqrt(252)  # 年化
+        return daily_vol * math.sqrt(252)
 
+    # ── 阶段1: 信号过滤 + 创建订单 ──
+    order_ids = []
     results = []
     skipped = []
-    vol_factors = []
     for r in rows:
-        if len(results) >= max_new:
+        if len(order_ids) >= max_new:
             break
 
         code = r["code"]
@@ -755,42 +847,30 @@ def auto_trade_from_signals() -> dict:
         strength = r["strength"] or 0
         score = r["score"] or "{}"
 
-        # 解析 score 验证阈值
+        # 解析 score
         try:
             import json
             sc = json.loads(score)
-            if isinstance(sc, dict):
-                total = sum(v for v in sc.values() if isinstance(v, (int, float)))
-            else:
-                total = float(sc) if sc else strength
+            total = sum(v for v in sc.values() if isinstance(v, (int, float))) if isinstance(sc, dict) else (float(sc) if sc else strength)
         except:
             total = strength
 
-        if strength < 25 or total < 25:
-            skipped.append({"code": code, "name": name, "reason": f"评分不足 {total:.1f}/{strength:.1f}"})
+        if strength < 10 or total < 10:
+            skipped.append({"code": code, "name": name, "reason": f"评分不足 {total:.1f}"})
             continue
 
         if code in held_codes:
             skipped.append({"code": code, "name": name, "reason": "已持有"})
             continue
 
-        # 板块去重：同板块已有持仓则跳过
-        sector_row = db.execute(
-            "SELECT sector FROM stock_pool WHERE code=?", (code,)
-        ).fetchone()
+        # 板块去重
+        sector_row = db.execute("SELECT sector FROM stock_pool WHERE code=?", (code,)).fetchone()
         stock_sector = sector_row["sector"] if sector_row else None
         if stock_sector and stock_sector in held_sectors:
             skipped.append({"code": code, "name": name, "reason": f"已持有同板块({stock_sector})"})
             continue
 
-        # 获取板块信息（股票池中可能没有，查 signals 的 sector 字段）
-        sig_sector = r["sector"] if "sector" in r.keys() and r["sector"] else None
-        sector_to_check = stock_sector or sig_sector
-        if sector_to_check and sector_to_check in held_sectors:
-            skipped.append({"code": code, "name": name, "reason": f"已持有同板块({sector_to_check})"})
-            continue
-
-        # 取最新价格
+        # 取价格
         price_row = db.execute(
             "SELECT close FROM daily_kline WHERE code=? ORDER BY date DESC LIMIT 1", (code,)
         ).fetchone()
@@ -799,83 +879,26 @@ def auto_trade_from_signals() -> dict:
             continue
         price = float(price_row["close"])
 
-        # 波动率仓位调整
+        # 仓位计算
         vol = get_volatility(code)
-        vol_factor = 1.0
-        if vol is not None:
-            # 基准年化波动率 30%，高于则减仓，低于则加仓
-            vol_factor = min(1.5, max(0.3, 0.30 / vol))
-            vol_factors.append(vol_factor)
-
-        # 仓位计算：20%现金 或 ¥5000，取小，再乘波动率+回撤因子
-        trade_amount = min(cash * 0.2, 5000) * vol_factor * drawdown_factor
-        volume = max(100, int(trade_amount / price / 100) * 100)  # 整手
+        vol_factor = min(1.5, max(0.3, 0.30 / vol)) if vol is not None else 1.0
+        trade_amount = min(cash * 0.2, 5000) * vol_factor * drawdown_factor * bear_factor
+        volume = max(100, int(trade_amount / price / 100) * 100)
         amount = round(price * volume, 2)
 
         if cash < amount:
             skipped.append({"code": code, "name": name, "reason": f"资金不足(需¥{amount:.0f})"})
             continue
 
-        # 创建订单
-        cur = db.execute(
-            """INSERT INTO orders (signal_id, code, name, direction, price, volume, amount,
-               order_status, sim_mode) VALUES (?,?,?,?,?,?,?,'created',1)""",
-            (r["id"], code, name, "buy", price, volume, amount)
-        )
-        order_id = cur.lastrowid
+        cash -= amount  # 预留资金
 
-        # 扣款
-        db.execute("UPDATE sim_account SET cash=cash-? WHERE id=?", (amount, acct["id"]))
-        cash -= amount
+        # 标记信号为 queued（次日开盘执行）
+        db.execute("UPDATE signals SET status='queued' WHERE id=?", (r["id"],))
 
-        # 更新订单为已成交
-        db.execute(
-            "UPDATE orders SET order_status='filled', updated_at=datetime('now','localtime') WHERE id=?",
-            (order_id,)
-        )
-
-        # 更新持仓
-        existing = db.execute(
-            "SELECT * FROM positions WHERE code=? AND sim_mode=1", (code,)
-        ).fetchone()
-        if existing:
-            total_vol = existing["volume"] + volume
-            new_cost = round((existing["avg_cost"] * existing["volume"] + price * volume) / total_vol, 2)
-            new_mv = round(price * total_vol, 2)
-            new_pnl = round(total_vol * (price - new_cost), 2)
-            new_pnl_pct = round((price - new_cost) / new_cost * 100, 2) if new_cost else 0
-            db.execute(
-                """UPDATE positions SET volume=?, avg_cost=?, current_price=?,
-                   market_value=?, profit_loss=?, profit_loss_pct=?,
-                   updated_at=datetime('now','localtime') WHERE id=?""",
-                (total_vol, new_cost, price, new_mv, new_pnl, new_pnl_pct, existing["id"])
-            )
-        else:
-            db.execute(
-                """INSERT INTO positions (code, name, volume, avg_cost, current_price,
-                   market_value, profit_loss, profit_loss_pct, sim_mode, buy_date)
-                   VALUES (?,?,?,?,?,?,?,?,1,?)""",
-                (code, name, volume, price, price, amount, 0, 0, today)
-            )
-
-        # 交易日志
-        db.execute(
-            """INSERT INTO trade_log (order_id, code, action, price, volume, sim_mode)
-               VALUES (?,?, 'open', ?, ?, 1)""",
-            (order_id, code, price, volume)
-        )
-
-        # 标记信号已使用
-        db.execute("UPDATE signals SET status='executed' WHERE id=?", (r["id"],))
-
-        held_codes.add(code)
-        if stock_sector:
-            held_sectors.add(stock_sector)
         results.append({
             "code": code, "name": name,
             "price": round(price, 2), "volume": volume,
-            "amount": round(amount, 2),
-            "score": round(total, 1)
+            "amount": round(amount, 2), "score": round(total, 1)
         })
 
     db.commit()
@@ -884,9 +907,160 @@ def auto_trade_from_signals() -> dict:
     total_amount = sum(r["amount"] for r in results)
     return {
         "ok": True,
-        "traded": len(results),
+        "queued": len(results),
         "total_amount": round(total_amount, 2),
         "trades": results,
         "skipped": skipped,
-        "msg": f"自动跟单 {len(results)} 笔 (共 ¥{total_amount:,.0f})，跳过 {len(skipped)} 只"
+        "msg": f"已排队 {len(results)} 笔 (共 ¥{total_amount:,.0f})，次日 9:31 开盘执行，跳过 {len(skipped)} 只"
+    }
+
+
+def auto_trade_open(date: str = None) -> dict:
+    """次日开盘执行 queued 信号 — 用开盘价买入
+    由 9:31 cron 调用，读取 status='queued' 的信号并执行
+    """
+    from datetime import date as dt_date
+    if date is None:
+        date = dt_date.today().strftime("%Y-%m-%d")
+
+    db = get_db()
+    rows = db.execute(
+        """SELECT * FROM signals
+           WHERE status='queued'
+           AND signal_type IN ('strong_buy','buy')
+           ORDER BY strength DESC"""
+    ).fetchall()
+
+    if not rows:
+        db.close()
+        return {"ok": True, "executed": 0, "msg": f"{date} 无 queued 信号"}
+
+    # 持仓 + 板块去重（复用 auto_trade 逻辑）
+    held_rows = db.execute(
+        "SELECT p.code, p.volume, s.sector FROM positions p "
+        "LEFT JOIN stock_pool s ON p.code=s.code "
+        "WHERE p.sim_mode=1 AND p.volume>0"
+    ).fetchall()
+    held_codes = {r["code"] for r in held_rows}
+    held_sectors = {r["sector"] for r in held_rows if r["sector"]}
+
+    acct = db.execute("SELECT * FROM sim_account ORDER BY id DESC LIMIT 1").fetchone()
+    cash = acct["cash"] if acct else 50000
+    total_pnl_pct = (acct["total_pnl"] or 0) / acct["initial_cash"] * 100 if acct and acct["initial_cash"] else 0
+
+    open_cnt = len(held_codes)
+    max_new = _get_max_positions() - open_cnt
+    if max_new <= 0:
+        db.close()
+        return {"ok": True, "executed": 0, "msg": f"已满仓({open_cnt}只)"}
+
+    # 市场过滤
+    from benchmark import market_regime_ok
+    market_ok, market_msg, bear_factor = market_regime_ok()
+    if not market_ok:
+        db.close()
+        return {"ok": True, "executed": 0, "msg": f"市场过滤: {market_msg}"}
+
+    if total_pnl_pct <= -10:
+        db.close()
+        return {"ok": True, "executed": 0, "msg": f"🔴 熔断！回撤 {total_pnl_pct:.1f}% ≤ -10%"}
+
+    drawdown_factor = 0.5 if total_pnl_pct <= -5 else 1.0
+
+    executed = 0
+    results = []
+    skipped = []
+
+    for r in rows:
+        if len(results) >= max_new:
+            break
+
+        code = r["code"]
+        name = r["name"]
+        strength = r["strength"] or 0
+
+        if code in held_codes:
+            skipped.append({"code": code, "name": name, "reason": "已持有"})
+            continue
+
+        sector_row = db.execute("SELECT sector FROM stock_pool WHERE code=?", (code,)).fetchone()
+        stock_sector = sector_row["sector"] if sector_row else None
+        if stock_sector and stock_sector in held_sectors:
+            skipped.append({"code": code, "name": name, "reason": f"同板块({stock_sector})"})
+            continue
+
+        # 🔄 重新分析（开盘价已出，用最新数据评估）
+        from analyzer import analyze_stock
+        fresh = analyze_stock(code, name)
+        if not fresh or "error" in fresh:
+            db.execute("UPDATE signals SET status='expired' WHERE id=?", (r["id"],))
+            skipped.append({"code": code, "name": name, "reason": "重分析失败"})
+            continue
+
+        fresh_type = fresh.get("signal_type", "")
+        fresh_score = fresh.get("score", 0)
+        if fresh_type not in ("buy", "strong_buy"):
+            db.execute("UPDATE signals SET status='expired' WHERE id=?", (r["id"],))
+            skipped.append({"code": code, "name": name,
+                "reason": f"信号变化: {fresh_type} (昨{r['signal_type']}, 评分{r['strength']}→{fresh_score})"})
+            continue
+
+        # 取开盘价
+        open_row = db.execute(
+            "SELECT open FROM daily_kline WHERE code=? ORDER BY date DESC LIMIT 1", (code,)
+        ).fetchone()
+        if not open_row or not open_row["open"]:
+            skipped.append({"code": code, "name": name, "reason": "无开盘价"})
+            continue
+        price = float(open_row["open"])
+
+        # 计算仓位置（简化：不复用波动率因子，直接用固定公式）
+        trade_amount = min(cash * 0.2, 5000) * drawdown_factor * bear_factor
+        volume = max(100, int(trade_amount / price / 100) * 100)
+        amount = round(price * volume, 2)
+
+        if cash < amount:
+            skipped.append({"code": code, "name": name, "reason": f"资金不足(需¥{amount:.0f})"})
+            continue
+
+        cash -= amount
+
+        # 创建订单
+        cur = db.execute(
+            """INSERT INTO orders (signal_id, code, name, direction, price, volume, amount,
+               order_status, sim_mode) VALUES (?,?,?,?,?,?,?,'created',1)""",
+            (r["id"], code, name, "buy", price, volume, amount)
+        )
+        order_id = cur.lastrowid
+        db.commit()
+
+        # 执行买入（用开盘价）
+        result = execute_buy(order_id, skip_time_check=True, use_open=True)
+        if result.get("ok"):
+            db.execute("UPDATE signals SET status='executed' WHERE id=?", (r["id"],))
+            executed += 1
+            results.append({
+                "code": code, "name": name,
+                "price": round(price, 2), "volume": volume,
+                "amount": round(amount, 2)
+            })
+        else:
+            db.execute("UPDATE orders SET order_status='failed' WHERE id=?", (order_id,))
+            skipped.append({"code": code, "name": name, "reason": result.get("error", "执行失败")})
+
+        held_codes.add(code)
+        if stock_sector:
+            held_sectors.add(stock_sector)
+
+    db.commit()
+    db.close()
+
+    total_amount = sum(r["amount"] for r in results)
+    return {
+        "ok": True,
+        "executed": executed,
+        "total_amount": round(total_amount, 2),
+        "trades": results,
+        "skipped": skipped,
+        "msg": f"开盘执行 {executed}/{len(rows)} 笔 (共 ¥{total_amount:,.0f})，跳过 {len(skipped)} 只"
     }

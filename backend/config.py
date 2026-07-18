@@ -14,10 +14,7 @@ STOP_LOSS_PCT = -0.05           # 止损线 -5%
 LLM_PROVIDER = "deepseek"
 LLM_MODEL = "deepseek-chat"
 LLM_TEMPERATURE = 0.3
-DEEPSEEK_API_KEY = os.environ.get(
-    "DEEPSEEK_API_KEY",
-    "sk-3baf224481ca46048c401db8ca6c5d73"  # 与Hermes共用key
-)
+DEEPSEEK_API_KEY = os.environ.get("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = "https://api.deepseek.com"
 
 # ── 信号阈值 ──

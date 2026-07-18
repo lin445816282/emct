@@ -6,23 +6,41 @@ import numpy as np
 from typing import Optional
 from database import get_db
 
-# ── 因子权重 ──
+# ── 因子权重（硬编码作为 fallback，实际从 DB strategy_config 读取） ──
 WEIGHTS = {
-    "ma_trend": 0.25,      # 均线排列
-    "macd": 0.20,          # MACD 金叉死叉
-    "rsi": 0.15,           # RSI 超买超卖
-    "bollinger": 0.15,     # 布林带位置
-    "volume": 0.10,        # 量价配合
-    "momentum": 0.15,      # 近期动量
+    "ma_trend": 0.18,      # 均线排列（微降：原20%→18%，减聚类）
+    "macd": 0.18,          # MACD 金叉死叉
+    "rsi": 0.14,           # RSI 超买超卖
+    "bollinger": 0.17,     # 布林带位置（微升15%→17%）
+    "volume": 0.17,        # 量价配合（微升15%→17%）
+    "momentum": 0.16,      # 近期动量
 }
 
-# ── 信号阈值 ──
+# ── 信号阈值（硬编码作为 fallback） ──
 SIGNAL_THRESHOLDS = {
-    "strong_buy": 30,
-    "buy": 10,
-    "sell": -10,
-    "strong_sell": -30,
+    "strong_buy": 28,      # 微提 30→28（实际放宽）
+    "buy": 10,             # 保持原阈值
+    "sell": -10,           # 保持原阈值
+    "strong_sell": -28,
 }
+
+
+def _get_weights() -> dict:
+    """从 DB 获取权重（优先），fallback 到硬编码"""
+    try:
+        from strategy_config import get_weights as gw
+        return gw()
+    except Exception:
+        return WEIGHTS
+
+
+def _get_thresholds() -> dict:
+    """从 DB 获取阈值（优先），fallback 到硬编码"""
+    try:
+        from strategy_config import get_thresholds as gt
+        return gt()
+    except Exception:
+        return SIGNAL_THRESHOLDS
 
 
 def load_klines(code: str, min_bars: int = 60) -> Optional[np.ndarray]:
@@ -54,7 +72,7 @@ def _compute_all_factors(rows, weights: dict = None) -> dict:
     n = len(closes)
     latest = closes[-1]
 
-    # ── 1. 均线趋势 (MA5/10/20/60) ──
+    # ── 1. 均线趋势 (MA5/10/20/60) — 分层评分增加区分度 ──
     ma5 = talib.SMA(closes, 5)
     ma10 = talib.SMA(closes, 10)
     ma20 = talib.SMA(closes, 20)
@@ -63,35 +81,84 @@ def _compute_all_factors(rows, weights: dict = None) -> dict:
     ma_score = 0
     ma_reasons = []
     if not np.isnan(ma5[-1]) and not np.isnan(ma10[-1]) and not np.isnan(ma20[-1]):
-        if ma5[-1] > ma10[-1] > ma20[-1]:
-            ma_score += 40
-            ma_reasons.append("多头排列")
-        elif ma5[-1] < ma10[-1] < ma20[-1]:
-            ma_score -= 40
-            ma_reasons.append("空头排列")
+        # 均线排列 — 层级判断
+        if not np.isnan(ma60[-1]):
+            if ma5[-1] > ma10[-1] > ma20[-1] > ma60[-1]:
+                ma_score += 40
+                ma_reasons.append("完美多头")
+            elif ma5[-1] > ma10[-1] > ma20[-1] and latest < ma60[-1]:
+                ma_score += 25
+                ma_reasons.append("短多长空")
+            elif ma5[-1] > ma10[-1] > ma20[-1]:
+                ma_score += 30
+                ma_reasons.append("多头排列")
+            elif ma5[-1] < ma10[-1] < ma20[-1] < ma60[-1]:
+                ma_score -= 40
+                ma_reasons.append("完美空头")
+            elif ma5[-1] < ma10[-1] < ma20[-1] and latest > ma60[-1]:
+                ma_score -= 25
+                ma_reasons.append("短空长多")
+            elif ma5[-1] < ma10[-1] < ma20[-1]:
+                ma_score -= 30
+                ma_reasons.append("空头排列")
+        else:
+            if ma5[-1] > ma10[-1] > ma20[-1]:
+                ma_score += 25
+                ma_reasons.append("多头排列")
+            elif ma5[-1] < ma10[-1] < ma20[-1]:
+                ma_score -= 25
+                ma_reasons.append("空头排列")
 
-        if latest > ma5[-1]:
-            ma_score += 20
+        # MA5乖离 — 分层
+        ma5_ratio = (latest - ma5[-1]) / ma5[-1] if ma5[-1] != 0 else 0
+        if ma5_ratio > 0.02:
+            ma_score += 15
+            ma_reasons.append("强突破MA5")
+        elif ma5_ratio > 0:
+            ma_score += 10
             ma_reasons.append("站上MA5")
-        elif latest < ma5[-1]:
-            ma_score -= 20
+        elif ma5_ratio > -0.01:
+            ma_score -= 3
+            ma_reasons.append("触MA5")
+        elif ma5_ratio > -0.02:
+            ma_score -= 8
             ma_reasons.append("跌破MA5")
+        else:
+            ma_score -= 12
+            ma_reasons.append("深跌MA5")
 
-        # 均线斜率
+        # 均线斜率 — 分层
         if n >= 6:
             slope5 = (ma5[-1] - ma5[-6]) / ma5[-6] * 100
-            if slope5 > 1:
-                ma_score += 15
+            if slope5 > 3:
+                ma_score += 12
+            elif slope5 > 1:
+                ma_score += 7
+            elif slope5 < -3:
+                ma_score -= 12
             elif slope5 < -1:
-                ma_score -= 15
+                ma_score -= 7
 
     if not np.isnan(ma60[-1]):
-        if latest > ma60[-1]:
-            ma_score += 25
+        ma60_ratio = (latest - ma60[-1]) / ma60[-1] if ma60[-1] != 0 else 0
+        if ma60_ratio > 0.08:
+            ma_score += 20
+            ma_reasons.append("远超MA60")
+        elif ma60_ratio > 0.03:
+            ma_score += 15
             ma_reasons.append("站上MA60")
+        elif ma60_ratio > 0:
+            ma_score += 8
+            ma_reasons.append("略高MA60")
+        elif ma60_ratio > -0.03:
+            ma_score += 3
+            ma_reasons.append("近MA60")
+        elif ma60_ratio > -0.08:
+            ma_score -= 8
+            ma_reasons.append("略低MA60")
         else:
-            ma_score -= 25
-            ma_reasons.append("跌破MA60")
+            ma_score -= 15
+            ma_reasons.append("深跌MA60")
 
     scores["ma_trend"] = np.clip(ma_score, -100, 100)
     details["ma_trend"] = {"ma5": round(ma5[-1], 2) if not np.isnan(ma5[-1]) else None,
@@ -272,21 +339,22 @@ def _compute_all_factors(rows, weights: dict = None) -> dict:
                            "reasons": mom_reasons}
 
     # ── 加权汇总 ──
-    w = weights if weights is not None else WEIGHTS
-    total = sum(scores[k] * w[k] for k in WEIGHTS)
+    w = weights if weights is not None else _get_weights()
+    thresholds = _get_thresholds()
+    total = sum(scores[k] * w[k] for k in w)
     signal_type = "hold"
-    if total >= SIGNAL_THRESHOLDS["strong_buy"]:
+    if total >= thresholds["strong_buy"]:
         signal_type = "strong_buy"
-    elif total >= SIGNAL_THRESHOLDS["buy"]:
+    elif total >= thresholds["buy"]:
         signal_type = "buy"
-    elif total <= SIGNAL_THRESHOLDS["strong_sell"]:
+    elif total <= thresholds["strong_sell"]:
         signal_type = "strong_sell"
-    elif total <= SIGNAL_THRESHOLDS["sell"]:
+    elif total <= thresholds["sell"]:
         signal_type = "sell"
 
     # 汇总所有原因
     all_reasons = []
-    for k in WEIGHTS:
+    for k in w:
         for r in details[k].get("reasons", []):
             all_reasons.append(f"[{k}] {r}")
 

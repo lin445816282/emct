@@ -9,7 +9,7 @@
         <div class="card-label">总盈亏</div>
       </div>
       <div class="stat-card">
-        <div class="card-val">{{ stats.win_rate }}%</div>
+        <div class="card-val">{{ displayWinRate }}</div>
         <div class="card-label">胜率</div>
       </div>
       <div class="stat-card">
@@ -124,7 +124,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, nextTick } from 'vue'
+import { ref, onMounted, watch, nextTick, computed } from 'vue'
 import { showToast } from 'vant'
 import * as echarts from 'echarts'
 
@@ -144,6 +144,13 @@ const noteShow = ref(false)
 const noteTarget = ref(null)
 const noteText = ref('')
 let chartInstance = null
+
+// 胜率显示：数值加%，文本直接显示
+const displayWinRate = computed(() => {
+  const v = stats.value?.win_rate
+  if (v == null) return '--'
+  return typeof v === 'number' || !isNaN(v) ? v + '%' : v
+})
 
 onMounted(() => { refresh(); loadEquityCurve() })
 

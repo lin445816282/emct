@@ -80,7 +80,7 @@
         <div class="stat-label">最大回撤</div>
       </div>
       <div class="stat-card">
-        <div class="stat-val">{{ summary.win_rate }}%</div>
+        <div class="stat-val">{{ displayBtWinRate }}</div>
         <div class="stat-label">胜率</div>
       </div>
       <div class="stat-card">
@@ -130,7 +130,7 @@
 </template>
 
 <script setup>
-import { ref, nextTick, watch, onMounted } from 'vue'
+import { ref, nextTick, watch, onMounted, computed } from 'vue'
 import { showToast } from 'vant'
 import * as echarts from 'echarts'
 
@@ -145,6 +145,13 @@ const trades = ref([])
 const chartRange = ref('')
 const chartRef = ref(null)
 let chart = null
+
+// 胜率显示：数值加%，文本直接显示
+const displayBtWinRate = computed(() => {
+  const v = summary.value?.win_rate
+  if (v == null) return '--'
+  return typeof v === 'number' || !isNaN(v) ? v + '%' : v
+})
 
 // 实时数据
 const account = ref(null)

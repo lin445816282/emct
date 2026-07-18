@@ -10,6 +10,11 @@ router = APIRouter(prefix="/signals", tags=["signals"])
 @router.post("/scan")
 def scan_signals():
     """扫描全部活跃股票，生成信号并入库（覆盖当天旧信号）"""
+    from datetime import datetime
+    now = datetime.now()
+    if now.weekday() >= 5:
+        return {"ok": False, "error": f"周末休市（{now.strftime('%Y-%m-%d')}），跳过信号扫描"}
+
     results = scan_all()
 
     db = get_db()

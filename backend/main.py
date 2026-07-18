@@ -28,7 +28,7 @@ app = FastAPI(title="EMCT量化交易系统", version="0.1.0", lifespan=lifespan
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 # ── 路由：双前缀（本地 + nginx/CF路径） ──
-from routers import stock_pool, positions, signals, orders, data, review_router, sim_router
+from routers import stock_pool, positions, signals, orders, data, review_router, sim_router, strategy
 for prefix in ["/api", "/emct/api"]:
     app.include_router(stock_pool.router, prefix=prefix)
     app.include_router(positions.router, prefix=prefix)
@@ -37,6 +37,7 @@ for prefix in ["/api", "/emct/api"]:
     app.include_router(data.router, prefix=prefix)
     app.include_router(review_router.router, prefix=prefix)
     app.include_router(sim_router.router, prefix=prefix)
+    app.include_router(strategy.router, prefix=prefix)
 
 @app.get("/api/health")
 @app.get("/emct/api/health")

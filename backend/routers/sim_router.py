@@ -6,9 +6,9 @@ from sim_trader import (
     execute_buy, execute_sell,
     get_sim_positions, get_sim_orders, refresh_prices,
     auto_stop_check, get_equity_curve, auto_sell_t1,
-    auto_trade_from_signals
+    auto_trade_from_signals, auto_trade_open
 )
-from backtest_engine import run_backtest
+from backtest_engine import run_backtest, run_rolling_backtest
 from benchmark import sync_hs300, get_benchmark
 
 router = APIRouter(prefix="/sim", tags=["sim"])
@@ -98,15 +98,20 @@ def do_settle_t1():
 
 @router.post("/auto-trade")
 def do_auto_trade():
-    """自动跟单：基于今日 pending 信号自动开仓"""
+    """自动跟单：基于今日 pending 信号 → 标记 queued（次日开盘执行）"""
     return auto_trade_from_signals()
+
+@router.post("/auto-trade-open")
+def do_auto_trade_open():
+    """次日开盘执行 queued 信号 → 用开盘价买入"""
+    return auto_trade_open()
 
 @router.get("/market-regime")
 def market_regime():
-    """查看当前市场趋势（用于决定是否跟单）"""
+    """查看当前市场趋势（v2：熊市允许轻仓10%）"""
     from benchmark import market_regime_ok
-    ok, msg = market_regime_ok()
-    return {"ok": ok, "msg": msg, "can_trade": ok}
+    ok, msg, bear_factor = market_regime_ok()
+    return {"ok": ok, "msg": msg, "can_trade": ok, "bear_factor": bear_factor}
 
 @router.get("/equity-curve")
 def equity_curve():
@@ -114,9 +119,34 @@ def equity_curve():
     return {"rows": get_equity_curve()}
 
 @router.get("/backtest")
-def backtest():
-    """运行回测"""
-    return run_backtest()
+def backtest(
+    date_from: str = None,
+    date_to: str = None,
+    min_strength: float = 10.0,
+    slippage: float = 0.001,
+    commission: float = 0.0003,
+):
+    """运行回测。可选参数：日期范围/最低信号强度/滑点/手续费"""
+    return run_backtest(
+        date_from=date_from,
+        date_to=date_to,
+        min_strength=min_strength,
+        slippage_pct=slippage,
+        commission_pct=commission,
+    )
+
+@router.get("/backtest/rolling")
+def rolling_backtest(
+    window_days: int = 30,
+    step_days: int = 7,
+    min_strength: float = 10.0,
+):
+    """滚动窗口回测"""
+    return run_rolling_backtest(
+        window_days=window_days,
+        step_days=step_days,
+        min_strength=min_strength,
+    )
 
 @router.post("/sync-benchmark")
 def do_sync_benchmark():

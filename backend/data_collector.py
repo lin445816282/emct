@@ -9,12 +9,17 @@ from database import get_db
 
 
 def fetch_daily_kline(code: str, days: int = 60) -> list[dict]:
-    """拉取单只股票历史日线（前复权）"""
+    """拉取单只股票/指数历史日线（前复权）"""
     try:
-        # stock_zh_a_daily 需要 sh/sz 前缀
-        prefix = "sh" if code.startswith(("6", "9")) else "sz"
-        symbol = f"{prefix}{code}"
-        df = ak.stock_zh_a_daily(symbol=symbol, adjust="qfq")
+        # 指数代码（000xxx/399xxx）用 stock_zh_index_daily
+        if code.startswith(("000", "399")):
+            prefix = "sh" if code.startswith("000") else "sz"
+            symbol = f"{prefix}{code}"
+            df = ak.stock_zh_index_daily(symbol=symbol)
+        else:
+            prefix = "sh" if code.startswith(("6", "9")) else "sz"
+            symbol = f"{prefix}{code}"
+            df = ak.stock_zh_a_daily(symbol=symbol, adjust="qfq")
         if df is None or df.empty:
             print(f"  ⚠️ {code} 无数据")
             return []
@@ -30,7 +35,7 @@ def fetch_daily_kline(code: str, days: int = 60) -> list[dict]:
                 "low": float(row["low"]),
                 "close": float(row["close"]),
                 "volume": float(row["volume"]),
-                "amount": float(row["amount"]),
+                "amount": float(row["amount"]) if "amount" in row else 0,
             })
         return rows
     except Exception as e:
