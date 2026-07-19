@@ -53,7 +53,7 @@
     <!-- 策略配置 -->
     <div class="section">
       <div class="sec-title">
-        <span>⚙️ 策略配置</span>
+        <span>⚙️ 策略配置 <van-tag size="mini" type="default" v-if="cfgVersion">v{{ cfgVersion }}</van-tag></span>
         <van-button size="mini" icon="info-o" type="primary" plain @click="showDoc = true">📖 文档</van-button>
       </div>
 
@@ -290,6 +290,7 @@ const adding = ref(false)
 const poolForm = ref({ code: '', name: '', market: 'SH', sector: '' })
 
 const showDoc = ref(false)  // 策略文档弹窗
+const cfgVersion = ref(0)   // 策略配置版本号
 
 const weights = ref({
   ma_trend: 0.18, macd: 0.18, rsi: 0.14,
@@ -349,6 +350,7 @@ async function loadCfg() {
       const data = await r.json()
       wgts.value = { ...data.weights }
       cfg.value = { ...data, weights: undefined, thresholds: { ...data.thresholds } }
+      cfgVersion.value = data.version || 0
     }
   } catch (e) {
     // fallback to loaded weights
@@ -368,8 +370,10 @@ async function doSaveCfg() {
       body: JSON.stringify(payload)
     })
     const data = await r.json()
-    if (data.ok) showToast('配置已保存')
-    else showToast('保存失败: ' + (data.error || ''))
+    if (data.ok) {
+      cfgVersion.value = data.version || (cfgVersion.value + 1)  // 保存后版本+1
+      showToast('配置已保存')
+    } else showToast('保存失败: ' + (data.error || ''))
   } catch { showToast('网络错误') }
   saving.value = false
 }

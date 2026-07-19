@@ -26,6 +26,15 @@ def _get_risk_params() -> dict:
                 "stop_loss_pct": -8, "take_profit_pct": 15, "max_hold_days": 10}
 
 
+def _get_config_snapshot() -> str:
+    """获取当前配置快照 JSON，用于订单审计"""
+    try:
+        from strategy_config import get_config_snapshot as gcs
+        return gcs()
+    except Exception:
+        return '{}'
+
+
 # ── 账户 ──
 
 def get_account() -> dict:
@@ -516,8 +525,8 @@ def auto_stop_check() -> dict:
             amount = round(price * pos["volume"], 2)
             cur = db.execute(
                 """INSERT INTO orders (code, name, direction, price, volume, amount,
-                   order_status, sim_mode) VALUES (?,?,?,?,?,?,'created',1)""",
-                (pos["code"], pos["name"], "sell", price, pos["volume"], amount)
+                   config_snapshot, order_status, sim_mode) VALUES (?,?,?,?,?,?,?,'created',1)""",
+                (pos["code"], pos["name"], "sell", price, pos["volume"], amount, _get_config_snapshot())
             )
             order_id = cur.lastrowid
             db.commit()
@@ -715,8 +724,8 @@ def auto_exit_check() -> dict:
         amount = round(price * volume, 2)
         cur = db.execute(
             """INSERT INTO orders (code, name, direction, price, volume, amount,
-               order_status, sim_mode) VALUES (?,?,?,?,?,?,'filled',1)""",
-            (code, pos["name"], "sell", price, volume, amount)
+               config_snapshot, order_status, sim_mode) VALUES (?,?,?,?,?,?,?,'filled',1)""",
+            (code, pos["name"], "sell", price, volume, amount, _get_config_snapshot())
         )
         order_id = cur.lastrowid
 
@@ -1032,8 +1041,8 @@ def auto_trade_open(date: str = None) -> dict:
         # 创建订单
         cur = db.execute(
             """INSERT INTO orders (signal_id, code, name, direction, price, volume, amount,
-               order_status, sim_mode) VALUES (?,?,?,?,?,?,?,'created',1)""",
-            (r["id"], code, name, "buy", price, volume, amount)
+               config_snapshot, order_status, sim_mode) VALUES (?,?,?,?,?,?,?,?,'created',1)""",
+            (r["id"], code, name, "buy", price, volume, amount, _get_config_snapshot())
         )
         order_id = cur.lastrowid
         db.commit()
@@ -1059,12 +1068,21 @@ def auto_trade_open(date: str = None) -> dict:
     db.commit()
     db.close()
 
+    # 记录执行时配置版本
+    try:
+        from strategy_config import get_config
+        exec_cfg = get_config()
+        config_ver = exec_cfg.get("version", "?")
+    except:
+        config_ver = "?"
+
     total_amount = sum(r["amount"] for r in results)
     return {
         "ok": True,
         "executed": executed,
         "total_amount": round(total_amount, 2),
+        "config_version": config_ver,
         "trades": results,
         "skipped": skipped,
-        "msg": f"开盘执行 {executed}/{len(rows)} 笔 (共 ¥{total_amount:,.0f})，跳过 {len(skipped)} 只"
+        "msg": f"开盘执行 {executed}/{len(rows)} 笔 (共 ¥{total_amount:,.0f})，跳过 {len(skipped)} 只 [配置 v{config_ver}]"
     }

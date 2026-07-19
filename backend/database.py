@@ -64,6 +64,7 @@ def init_db():
             order_ref TEXT DEFAULT '',
             screenshot_path TEXT DEFAULT '',
             error_msg TEXT DEFAULT '',
+            config_snapshot TEXT DEFAULT '',
             created_at TEXT DEFAULT (datetime('now','localtime')),
             updated_at TEXT DEFAULT (datetime('now','localtime'))
         );
@@ -149,6 +150,9 @@ def _migrate(db):
     except: pass
     # buy_date for positions (持仓开仓日期，用于计算持有天数)
     try: db.execute("ALTER TABLE positions ADD COLUMN buy_date TEXT DEFAULT ''")
+    except: pass
+    # config_snapshot for orders (策略配置快照，审计用)
+    try: db.execute("ALTER TABLE orders ADD COLUMN config_snapshot TEXT DEFAULT ''")
     except: pass
     # 确保 sim_account 有种子数据
     row = db.execute("SELECT COUNT(*) as c FROM sim_account").fetchone()

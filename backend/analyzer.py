@@ -26,21 +26,21 @@ SIGNAL_THRESHOLDS = {
 
 
 def _get_weights() -> dict:
-    """从 DB 获取权重（优先），fallback 到硬编码"""
-    try:
-        from strategy_config import get_weights as gw
-        return gw()
-    except Exception:
-        return WEIGHTS
+    """从 DB 获取权重。失败则抛出异常，绝不静默回退"""
+    from strategy_config import get_weights as gw
+    w = gw()
+    if not w or len(w) != 6:
+        raise RuntimeError(f"策略权重无效或缺失: {w}")
+    return w
 
 
 def _get_thresholds() -> dict:
-    """从 DB 获取阈值（优先），fallback 到硬编码"""
-    try:
-        from strategy_config import get_thresholds as gt
-        return gt()
-    except Exception:
-        return SIGNAL_THRESHOLDS
+    """从 DB 获取阈值。失败则抛出异常"""
+    from strategy_config import get_thresholds as gt
+    t = gt()
+    if not t or len(t) != 4:
+        raise RuntimeError(f"信号阈值无效或缺失: {t}")
+    return t
 
 
 def load_klines(code: str, min_bars: int = 60) -> Optional[np.ndarray]:
@@ -58,7 +58,7 @@ def load_klines(code: str, min_bars: int = 60) -> Optional[np.ndarray]:
 
 
 def compute_all_factors(rows) -> dict:
-    return _compute_all_factors(rows, WEIGHTS)
+    return _compute_all_factors(rows, None)  # None → 内部调用 _get_weights() 从 DB 读
 
 def _compute_all_factors(rows, weights: dict = None) -> dict:
     """计算所有技术因子，返回评分明细"""

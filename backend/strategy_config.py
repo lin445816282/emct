@@ -132,5 +132,27 @@ def get_risk_params() -> dict:
     }
 
 
+def get_config_snapshot() -> str:
+    """返回当前配置的 JSON 快照，含版本号，用于订单审计"""
+    import json
+    cfg = get_config()
+    db = get_db()
+    row = db.execute("SELECT version FROM strategy_config WHERE id=1").fetchone()
+    db.close()
+    snapshot = {
+        "version": row["version"] if row else 1,
+        "weights": cfg["weights"],
+        "thresholds": cfg["thresholds"],
+        "bear_factor": cfg["bear_factor"],
+        "max_positions": cfg["max_positions"],
+        "min_strength": cfg["min_strength"],
+        "max_single_amount": cfg["max_single_amount"],
+        "stop_loss_pct": cfg["stop_loss_pct"],
+        "take_profit_pct": cfg["take_profit_pct"],
+        "max_hold_days": cfg["max_hold_days"],
+    }
+    return json.dumps(snapshot, ensure_ascii=False)
+
+
 # 初始化
 _init_table()
