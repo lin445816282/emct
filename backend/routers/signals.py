@@ -2,7 +2,7 @@
 import json
 from fastapi import APIRouter
 from database import get_db
-from analyzer import scan_all, analyze_stock, WEIGHTS
+from analyzer import scan_all, analyze_stock, compute_ranked_signals, WEIGHTS
 
 router = APIRouter(prefix="/signals", tags=["signals"])
 
@@ -105,6 +105,12 @@ def expire_signal(signal_id: int):
     db.commit()
     db.close()
     return {"ok": True}
+
+
+@router.get("/ranked")
+def get_ranked_signals():
+    """综合排行：技术评分 + 历史绩效（胜率/盈亏比）"""
+    return compute_ranked_signals()
 
 
 # ── 权重优化 API ──

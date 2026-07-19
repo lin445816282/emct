@@ -21,7 +21,10 @@
             >
               <template #desc>
                 <van-tag :type="typeColor(s.signal_type)" size="small">{{ signalLabel(s.signal_type) }}</van-tag>
-                <span class="score">评分 {{ s.strength || s.score }}</span>
+                <span class="score">评分 {{ s.strength || s.score }}<template v-if="s.rank_score !== undefined">｜综合 {{ s.rank_score }}</template></span>
+                <span class="hist-badge" v-if="s.has_history && s.hist_stats">
+                  🏆 胜率{{ s.hist_stats.win_rate }}% · PF{{ s.hist_stats.profit_factor }}
+                </span>
                 <span class="price" v-if="s.price_ref">参考价 ¥{{ s.price_ref }}</span>
                 <span class="expand-arrow">{{ expandedIds.has(s.id) ? '▲' : '▼' }}</span>
               </template>
@@ -159,6 +162,24 @@ onMounted(() => {
 async function refresh() {
   const data = await signals.list('pending')
   signalsList.value = data.rows || []
+
+  // 加载综合排行数据（含历史绩效）
+  try {
+    const ranked = await signals.ranked()
+    if (Array.isArray(ranked)) {
+      const rankMap = {}
+      ranked.forEach(r => { rankMap[r.code] = r })
+      signalsList.value.forEach(s => {
+        const r = rankMap[s.code]
+        if (r) {
+          s.rank_score = r.rank_score
+          s.hist_stats = r.hist_stats
+          s.has_history = r.has_history
+        }
+      })
+    }
+  } catch {} // 排行加载失败不影响主流程
+
   signalBadge.value = signalsList.value.length
 }
 
@@ -315,6 +336,7 @@ function statusColor(s) { return s === 'confirmed' ? 'success' : s === 'executed
 .type-card.strong-sell .type-num { color: #1565c0; }
 .scan-summary-old { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
 .score { margin-left: 8px; color: #e67e22; font-size: 12px; }
+.hist-badge { margin-left: 8px; color: #07c160; font-size: 11px; background: rgba(7,193,96,.1); padding: 1px 6px; border-radius: 10px; }
 .price { margin-left: 8px; color: #333; font-size: 12px; }
 .signal-card { cursor: pointer; }
 .expand-arrow { margin-left: auto; color: #999; font-size: 11px; }

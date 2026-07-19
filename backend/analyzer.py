@@ -352,8 +352,18 @@ def _compute_all_factors(rows, weights: dict = None) -> dict:
     elif total <= thresholds["sell"]:
         signal_type = "sell"
 
+    # ── 成交量过滤器：缩量信号降级 ──
+    vol_ratio = details["volume"].get("vol_ratio") or 1.0
+    vol_filter_msg = None
+    if signal_type in ("buy", "strong_buy") and vol_ratio < 0.7:
+        old_signal = signal_type
+        signal_type = "buy" if old_signal == "strong_buy" else "hold"
+        vol_filter_msg = f"[filter] 缩量({vol_ratio:.1f}x)降级: {old_signal}→{signal_type}"
+
     # 汇总所有原因
     all_reasons = []
+    if vol_filter_msg:
+        all_reasons.append(vol_filter_msg)
     for k in w:
         for r in details[k].get("reasons", []):
             all_reasons.append(f"[{k}] {r}")
@@ -393,6 +403,84 @@ def scan_all() -> list[dict]:
             signals.append(r)
 
     signals.sort(key=lambda x: abs(x["score"]), reverse=True)
+    return signals
+
+
+def get_historical_stats() -> dict[str, dict]:
+    """从 trade_log 计算每只股票的历史绩效：胜率、盈亏比、交易次数"""
+    db = get_db()
+    rows = db.execute("""
+        SELECT code,
+               COUNT(*) as total,
+               SUM(CASE WHEN pnl > 0 THEN 1 ELSE 0 END) as wins,
+               SUM(CASE WHEN pnl > 0 THEN pnl ELSE 0 END) as total_gain,
+               SUM(CASE WHEN pnl < 0 THEN ABS(pnl) ELSE 0 END) as total_loss,
+               AVG(pnl) as avg_pnl,
+               AVG(pnl_pct) as avg_pnl_pct,
+               AVG(hold_days) as avg_hold_days,
+               MAX(created_at) as last_trade
+        FROM trade_log
+        WHERE action='close' AND sim_mode=1
+        GROUP BY code
+        HAVING total >= 1
+    """).fetchall()
+    db.close()
+
+    stats = {}
+    for r in rows:
+        win_rate = r["wins"] / r["total"] if r["total"] > 0 else 0
+        profit_factor = r["total_gain"] / r["total_loss"] if r["total_loss"] > 0 else (r["total_gain"] if r["total_gain"] > 0 else 0)
+        stats[r["code"]] = {
+            "total_trades": r["total"],
+            "wins": r["wins"],
+            "win_rate": round(win_rate * 100, 1),
+            "profit_factor": round(profit_factor, 2),
+            "avg_pnl": round(r["avg_pnl"] or 0, 2),
+            "avg_pnl_pct": round(r["avg_pnl_pct"] or 0, 2),
+            "avg_hold_days": round(r["avg_hold_days"] or 0, 1),
+            "last_trade": r["last_trade"],
+        }
+    return stats
+
+
+def compute_ranked_signals() -> list[dict]:
+    """综合排行 = 技术评分(70%) + 历史绩效(30%: 胜率15%+盈亏比15%)"""
+    signals = scan_all()
+    stats = get_historical_stats()
+
+    # 历史评分归一化的参考值（主观但合理）
+    max_trades = max((s["total_trades"] for s in stats.values()), default=1)
+
+    for sig in signals:
+        code = sig["code"]
+        hist = stats.get(code, {})
+        trades = hist.get("total_trades", 0)
+        win_rate = hist.get("win_rate", 0)
+        profit_factor = hist.get("profit_factor", 0)
+
+        # 历史权重随交易次数逐渐增加（≤5次: 权重砍半, >10次: 满权重）
+        confidence = min(trades / 10, 1.0)
+
+        # 胜率得分（-100~100）
+        wr_score = (win_rate - 50) * 2  # 50%→0, 75%→50, 25%→-50
+        wr_score = np.clip(wr_score, -100, 100)
+
+        # 盈亏比得分（-100~100）
+        pf_score = (profit_factor - 1) * 50  # 1.0→0, 2.0→50, 3.0→100
+        pf_score = np.clip(pf_score, -100, 100)
+
+        # 有历史数据的修正：技术60% + 胜率20% + 盈亏比20%（历史权重×置信度）
+        if trades > 0:
+            hist_part = (wr_score * 0.5 + pf_score * 0.5) * confidence
+            composite = sig["score"] * 0.7 + hist_part * 0.3  # 技术70%固定
+        else:
+            composite = sig["score"]  # 无历史数据，纯技术评分
+
+        sig["rank_score"] = round(float(composite), 1)
+        sig["hist_stats"] = hist
+        sig["has_history"] = trades > 0
+
+    signals.sort(key=lambda x: x["rank_score"], reverse=True)
     return signals
 
 

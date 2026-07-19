@@ -30,6 +30,7 @@ export const signals = {
     return get('/signals' + (q ? '?' + q.slice(0, -1) : ''))
   },
   scan: () => post('/signals/scan'),
+  ranked: () => get('/signals/ranked'),
   analyze: (code, name) => get(`/signals/analyze/${code}?name=${encodeURIComponent(name || '')}`),
   confirm: (id) => post(`/signals/${id}/confirm`),
   expire: (id) => post(`/signals/${id}/expire`),
