@@ -16,6 +16,7 @@ DEFAULTS = {
     "max_single_amount": 5000,
     "stop_loss_pct": -8,
     "take_profit_pct": 15,
+    "trailing_stop_pct": 3,  # 移动止损：从最高点回撤3%触发卖出
     "max_hold_days": 10,
     "circuit_breaker_pct": -15,  # 组合回撤熔断线（负数，如 -15 表示亏 15% 停开仓）
     "caution_drawdown_pct": -7,   # 回撤警告线（负数，触及减半仓位）
