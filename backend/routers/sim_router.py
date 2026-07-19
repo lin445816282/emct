@@ -122,15 +122,13 @@ def equity_curve():
 def backtest(
     date_from: str = None,
     date_to: str = None,
-    min_strength: float = 10.0,
     slippage: float = 0.001,
     commission: float = 0.0003,
 ):
-    """运行回测。可选参数：日期范围/最低信号强度/滑点/手续费"""
+    """运行回测。风控参数从 DB strategy_config 自动读取"""
     return run_backtest(
         date_from=date_from,
         date_to=date_to,
-        min_strength=min_strength,
         slippage_pct=slippage,
         commission_pct=commission,
     )
@@ -139,13 +137,11 @@ def backtest(
 def rolling_backtest(
     window_days: int = 30,
     step_days: int = 7,
-    min_strength: float = 10.0,
 ):
-    """滚动窗口回测"""
+    """滚动窗口回测。风控参数从 DB 自动读取"""
     return run_rolling_backtest(
         window_days=window_days,
         step_days=step_days,
-        min_strength=min_strength,
     )
 
 @router.post("/sync-benchmark")

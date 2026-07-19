@@ -115,6 +115,18 @@
               <div class="slider-label"><span>📅 持仓天数</span><span class="w-pct">{{ cfg.max_hold_days }}天</span></div>
               <van-slider v-model="cfg.max_hold_days" :min="3" :max="20" :step="1" bar-height="4px" />
             </div>
+            <div class="slider-item">
+              <div class="slider-label"><span>🚫 熔断线</span><span class="w-pct">{{ cfg.circuit_breaker_pct }}%</span></div>
+              <van-slider v-model="cfg.circuit_breaker_pct" :min="-30" :max="-5" :step="1" bar-height="4px" />
+            </div>
+            <div class="slider-item">
+              <div class="slider-label"><span>⚠️ 谨慎回撤线</span><span class="w-pct">{{ cfg.caution_drawdown_pct }}%</span></div>
+              <van-slider v-model="cfg.caution_drawdown_pct" :min="-15" :max="-3" :step="1" bar-height="4px" />
+            </div>
+            <div class="slider-item">
+              <div class="slider-label"><span>🔻 谨慎因子</span><span class="w-pct">{{ (cfg.caution_factor * 100).toFixed(0) }}%</span></div>
+              <van-slider v-model="cfg.caution_factor" :min="0.2" :max="1.0" :step="0.1" bar-height="4px" />
+            </div>
           </div>
         </van-tab>
       </van-tabs>
@@ -259,6 +271,15 @@
             <h3>🐻 熊市因子说明</h3>
             <p>熊市因子（默认 0.5）<b>直接乘以总分缩小买入信号强度</b>：<code>adjusted_score = total_score × bear_factor</code>。设为 0.3 = 所有信号打三折，极致保守；设为 1.0 = 不衰减，正常评分。于市场整体弱势时压低可大幅减少假买入信号。</p>
 
+            <h3>🔒 三层风控引擎说明</h3>
+            <div class="doc-interact">
+              <p><b>🛑 止损线（默认 -8%）：</b>个股跌破买入价触发无条件平仓。第一道防线。</p>
+              <p><b>🚫 熔断线（默认 -10%）：</b>账户总回撤超此线→禁止新订单（熔断）。第二道防线。</p>
+              <p><b>⚠️ 谨慎回撤线（默认 -5%）：</b>账户总回撤超此线→信号减弱。第三道防线。</p>
+              <p><b>🔻 谨慎因子（默认 0.5）：</b>进入谨慎区后买入评分=原评分×谨慎因子。数值越低越保守。</p>
+              <p>调整建议：<b>激进风格</b>→熔断线-15%、谨慎因子0.8；<b>保守风格</b>→熔断线-6%、谨慎因子0.3。</p>
+            </div>
+
             <h3>💡 实战调参经验</h3>
             <div class="doc-tips">
               <p>• <b>信号太多但胜率低</b> → 提高信号阀值（strong_buy 28→35, buy 10→15），降低均线/MACD 权重，提高量价权重。</p>
@@ -308,7 +329,8 @@ const optResult = ref(null)
 const cfg = ref({
   thresholds: { strong_buy: 28, buy: 10, sell: -10, strong_sell: -28 },
   bear_factor: 0.5, max_positions: 8, min_strength: 10,
-  max_single_amount: 5000, stop_loss_pct: -8, take_profit_pct: 15, max_hold_days: 10
+  max_single_amount: 5000, stop_loss_pct: -8, take_profit_pct: 15, max_hold_days: 10,
+  circuit_breaker_pct: -15, caution_drawdown_pct: -7, caution_factor: 0.6
 })
 
 const tlabels = { strong_buy: '强烈买入', buy: '买入', sell: '卖出', strong_sell: '强烈卖出' }

@@ -8,22 +8,15 @@ from analyzer import analyze_stock
 
 
 def _get_max_positions() -> int:
-    """从 DB 策略配置读取满仓数，fallback 8"""
-    try:
-        from strategy_config import get_max_positions as gmp
-        return gmp()
-    except Exception:
-        return 8
+    """从 DB 策略配置读取满仓数。失败则抛异常，绝不静默回退"""
+    from strategy_config import get_max_positions as gmp
+    return gmp()
 
 
 def _get_risk_params() -> dict:
-    """从 DB 策略配置读取风控参数"""
-    try:
-        from strategy_config import get_risk_params as grp
-        return grp()
-    except Exception:
-        return {"min_strength": 10, "max_single_amount": 5000,
-                "stop_loss_pct": -8, "take_profit_pct": 15, "max_hold_days": 10}
+    """从 DB 策略配置读取风控参数。失败则抛异常，绝不静默回退"""
+    from strategy_config import get_risk_params as grp
+    return grp()
 
 
 def _get_config_snapshot() -> str:
@@ -705,7 +698,7 @@ def auto_exit_check() -> dict:
         elif hold_days >= 1:
             trigger = f"T+1平仓({hold_days}天)"
         # 到期
-        elif hold_days >= risk.get("max_hold_days", 10):
+        elif hold_days >= risk["max_hold_days"]:
             trigger = f"到期({hold_days}天)"
         # 信号反转
         else:
@@ -790,9 +783,10 @@ def auto_trade_from_signals() -> dict:
     acct = db.execute("SELECT * FROM sim_account ORDER BY id DESC LIMIT 1").fetchone()
     if acct:
         total_pnl_pct = (acct["total_pnl"] or 0) / acct["initial_cash"] * 100 if acct["initial_cash"] else 0
-        if total_pnl_pct <= -10:
+        circuit_breaker = _get_risk_params()["circuit_breaker_pct"]
+        if total_pnl_pct <= circuit_breaker:
             db.close()
-            return {"ok": True, "traded": 0, "msg": f"🔴 熔断！组合回撤 {total_pnl_pct:.1f}% ≤ -10%，暂停开仓"}
+            return {"ok": True, "traded": 0, "msg": f"🔴 熔断！组合回撤 {total_pnl_pct:.1f}% ≤ {circuit_breaker}%，暂停开仓"}
 
     # 1. 查信号
     rows = db.execute(
@@ -828,8 +822,9 @@ def auto_trade_from_signals() -> dict:
         db.close()
         return {"ok": True, "traded": 0, "msg": f"已满仓({open_cnt}只)，不再开新仓"}
 
-    # 回撤 -5%~-10%：仓位减半
-    drawdown_factor = 0.5 if total_pnl_pct <= -5 else 1.0
+    # 回撤警告：仓位减半（阈值和系数从 DB 读取）
+    risk_params = _get_risk_params()
+    drawdown_factor = risk_params["caution_factor"] if total_pnl_pct <= risk_params["caution_drawdown_pct"] else 1.0
 
     def get_volatility(code):
         """计算20日年化波动率"""
@@ -858,12 +853,13 @@ def auto_trade_from_signals() -> dict:
         score = r["score"] or "{}"
 
         # 解析 score
+        import json
         try:
-            import json
             sc = json.loads(score)
             total = sum(v for v in sc.values() if isinstance(v, (int, float))) if isinstance(sc, dict) else (float(sc) if sc else strength)
-        except:
-            total = strength
+        except (json.JSONDecodeError, TypeError, ValueError):
+            skipped.append({"code": code, "name": name, "reason": f"评分数据异常，跳过"})
+            continue
 
         risk = _get_risk_params()
         if strength < risk["min_strength"] or total < risk["min_strength"]:
@@ -973,11 +969,12 @@ def auto_trade_open(date: str = None) -> dict:
         db.close()
         return {"ok": True, "executed": 0, "msg": f"市场过滤: {market_msg}"}
 
-    if total_pnl_pct <= -10:
+    rp = _get_risk_params()
+    if total_pnl_pct <= rp["circuit_breaker_pct"]:
         db.close()
-        return {"ok": True, "executed": 0, "msg": f"🔴 熔断！回撤 {total_pnl_pct:.1f}% ≤ -10%"}
+        return {"ok": True, "executed": 0, "msg": f"🔴 熔断！回撤 {total_pnl_pct:.1f}% ≤ {rp['circuit_breaker_pct']}%"}
 
-    drawdown_factor = 0.5 if total_pnl_pct <= -5 else 1.0
+    drawdown_factor = rp["caution_factor"] if total_pnl_pct <= rp["caution_drawdown_pct"] else 1.0
 
     executed = 0
     results = []

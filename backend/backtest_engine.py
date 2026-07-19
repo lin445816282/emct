@@ -12,26 +12,24 @@ from database import get_db
 def run_backtest(
     initial_cash: float = 50000,
     max_position_pct: float = 0.3,
-    stop_loss_pct: float = -0.08,
-    take_profit_pct: float = 0.15,
-    max_hold_days: int = 10,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
-    min_strength: float = 10.0,
     slippage_pct: float = 0.001,  # 滑点 0.1%
     commission_pct: float = 0.0003,  # 手续费 0.03%
 ) -> dict:
     """
     回测：遍历信号，模拟买入→持仓→卖出
-
-    新增参数:
-        date_from/to: 信号日期范围（默认最近60天）
-        min_strength: 最低信号强度（过滤弱信号）
-        slippage_pct: 滑点比例
-        commission_pct: 手续费比例
+    
+    风控参数（止损/止盈/满仓天数/最小强度）从 DB strategy_config 实时读取
     """
+    from strategy_config import get_config as _get_strategy
+    cfg = _get_strategy()
+    stop_loss_pct = cfg["stop_loss_pct"] / 100  # DB存整数，转小数
+    take_profit_pct = cfg["take_profit_pct"] / 100
+    max_hold_days = cfg["max_hold_days"]
+    min_strength = cfg["min_strength"]
+
     db = get_db()
-    db.row_factory = sqlite3.Row
 
     # 默认日期范围：最近 60 天
     if not date_from:

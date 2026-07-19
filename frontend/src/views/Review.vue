@@ -59,7 +59,7 @@
     </div>
 
     <!-- AI分析结果 -->
-    <div v-if="aiResult" class="ai-box">
+    <div v-show="aiResult" class="ai-box">
       <div class="ai-title">🤖 DeepSeek 分析</div>
       <div class="ai-content">{{ aiResult }}</div>
     </div>
@@ -152,7 +152,21 @@ const displayWinRate = computed(() => {
   return typeof v === 'number' || !isNaN(v) ? v + '%' : v
 })
 
-onMounted(() => { refresh(); loadEquityCurve() })
+onMounted(() => {
+  refresh()
+  loadEquityCurve()
+  // 恢复AI分析结果（绕过响应式问题）
+  const saved = localStorage.getItem('emct_ai_result')
+  if (saved) {
+    aiResult.value = saved
+    nextTick(() => {
+      const box = document.querySelector('.ai-box')
+      const content = document.querySelector('.ai-content')
+      if (box) box.style.display = ''
+      if (content && saved) content.textContent = saved
+    })
+  }
+})
 
 async function refresh() {
   try {
@@ -186,8 +200,16 @@ async function doAIAnalyze() {
   try {
     const res = await fetch('/emct/api/review/analyze')
     const data = await res.json()
-    aiResult.value = data.analysis || 'AI分析无返回'
-  } catch { showToast('分析失败，请刷新重试') }
+    const text = data.analysis || 'AI分析无返回'
+    aiResult.value = text
+    localStorage.setItem('emct_ai_result', text)
+    await nextTick()
+    // 直接DOM操作确保显示
+    const box = document.querySelector('.ai-box')
+    const content = document.querySelector('.ai-content')
+    if (box) box.style.display = ''
+    if (content) content.textContent = text
+  } catch(e) { showToast('分析失败，请刷新重试') }
   aiLoading.value = false
 }
 

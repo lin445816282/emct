@@ -17,10 +17,15 @@ DEFAULTS = {
     "stop_loss_pct": -8,
     "take_profit_pct": 15,
     "max_hold_days": 10,
+    "circuit_breaker_pct": -15,  # 组合回撤熔断线（负数，如 -15 表示亏 15% 停开仓）
+    "caution_drawdown_pct": -7,   # 回撤警告线（负数，触及减半仓位）
+    "caution_factor": 0.6,        # 警告仓位系数（如 0.6 = 降至60%）
 }
 
-# 内存缓存，避免频繁读 DB
+# 内存缓存（短TTL，避免多进程读到过期配置）
 _cache = None
+_cache_time = 0
+_CACHE_TTL = 5  # 秒，足够短让 cron job 进程间同步
 
 
 def _init_table():
@@ -46,9 +51,11 @@ def _init_table():
 
 
 def get_config() -> dict:
-    """获取当前策略配置（含缓存）"""
-    global _cache
-    if _cache is not None:
+    """获取当前策略配置（5秒TTL缓存，跨进程同步友好）"""
+    global _cache, _cache_time
+    import time
+    now = time.time()
+    if _cache is not None and (now - _cache_time) < _CACHE_TTL:
         return _cache
 
     db = get_db()
@@ -60,6 +67,7 @@ def get_config() -> dict:
     else:
         _init_table()
         _cache = dict(DEFAULTS)
+    _cache_time = now
     return _cache
 
 
@@ -129,6 +137,9 @@ def get_risk_params() -> dict:
         "max_hold_days": cfg["max_hold_days"],
         "max_single_amount": cfg["max_single_amount"],
         "min_strength": cfg["min_strength"],
+        "circuit_breaker_pct": cfg.get("circuit_breaker_pct", -15),
+        "caution_drawdown_pct": cfg.get("caution_drawdown_pct", -7),
+        "caution_factor": cfg.get("caution_factor", 0.6),
     }
 
 
@@ -150,6 +161,9 @@ def get_config_snapshot() -> str:
         "stop_loss_pct": cfg["stop_loss_pct"],
         "take_profit_pct": cfg["take_profit_pct"],
         "max_hold_days": cfg["max_hold_days"],
+        "circuit_breaker_pct": cfg.get("circuit_breaker_pct", -15),
+        "caution_drawdown_pct": cfg.get("caution_drawdown_pct", -7),
+        "caution_factor": cfg.get("caution_factor", 0.6),
     }
     return json.dumps(snapshot, ensure_ascii=False)
 

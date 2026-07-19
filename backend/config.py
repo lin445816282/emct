@@ -2,7 +2,7 @@
 import os
 
 # ── 数据库 ──
-DB_PATH = "backend/data/emct.db"
+DB_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data", "emct.db")
 
 # ── 风控参数 ──
 MAX_SINGLE_AMOUNT = 50000       # 单笔最大5万

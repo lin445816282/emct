@@ -20,6 +20,9 @@ def api_get_config():
         "stop_loss_pct": c.get("stop_loss_pct", -8),
         "take_profit_pct": c.get("take_profit_pct", 15),
         "max_hold_days": c.get("max_hold_days", 10),
+        "circuit_breaker_pct": c.get("circuit_breaker_pct", -15),
+        "caution_drawdown_pct": c.get("caution_drawdown_pct", -7),
+        "caution_factor": c.get("caution_factor", 0.6),
         "version": _get_version(),
     }
 
@@ -34,7 +37,11 @@ def api_update_config(data: dict):
             "bear_factor": saved.get("bear_factor"), "max_positions": saved.get("max_positions"),
             "min_strength": saved.get("min_strength"), "max_single_amount": saved.get("max_single_amount"),
             "stop_loss_pct": saved.get("stop_loss_pct"), "take_profit_pct": saved.get("take_profit_pct"),
-            "max_hold_days": saved.get("max_hold_days"), "version": _get_version()}
+            "max_hold_days": saved.get("max_hold_days"),
+            "circuit_breaker_pct": saved.get("circuit_breaker_pct"),
+            "caution_drawdown_pct": saved.get("caution_drawdown_pct"),
+            "caution_factor": saved.get("caution_factor"),
+            "version": _get_version()}
 
 
 @router.post("/reset")
@@ -45,7 +52,11 @@ def api_reset_config():
             "bear_factor": saved.get("bear_factor"), "max_positions": saved.get("max_positions"),
             "min_strength": saved.get("min_strength"), "max_single_amount": saved.get("max_single_amount"),
             "stop_loss_pct": saved.get("stop_loss_pct"), "take_profit_pct": saved.get("take_profit_pct"),
-            "max_hold_days": saved.get("max_hold_days"), "message": "已恢复默认配置"}
+            "max_hold_days": saved.get("max_hold_days"),
+            "circuit_breaker_pct": saved.get("circuit_breaker_pct"),
+            "caution_drawdown_pct": saved.get("caution_drawdown_pct"),
+            "caution_factor": saved.get("caution_factor"),
+            "message": "已恢复默认配置"}
 
 
 @router.post("/optimize")
@@ -53,7 +64,10 @@ def api_optimize_weights(n_iter: int = 30, max_stocks: int = 15):
     """AI 优化因子权重（基于历史信号-收益相关性）"""
     try:
         from weight_optimizer import optimize as run_optimize
-        result = run_optimize(n_iter=n_iter, max_stocks=max_stocks)
+        from strategy_config import get_config
+        current_cfg = get_config()
+        current_weights = current_cfg.get("weights", {})
+        result = run_optimize(n_iter=n_iter, max_stocks=max_stocks, current_weights=current_weights)
         
         if result.get("ok") and result.get("best_weights"):
             # 仅更新 weights 部分，不动其他配置

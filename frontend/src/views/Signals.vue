@@ -57,7 +57,7 @@
         <van-button v-if="simStore.enabled && signalsList.length" size="small" type="danger" :loading="batching" :disabled="!isTradingTime()" @click="doBatchOrder">
           一键跟单
         </van-button>
-        <van-button v-if="!signalsList.length" size="small" type="warning" :loading="scanning" @click="doScan">
+        <van-button v-if="!signalsList.length" size="small" type="warning" :loading="scanning" @click="doScan" class="signal-scan-btn">
           开始扫描
         </van-button>
       </div>
@@ -166,8 +166,12 @@ async function doScan() {
   scanning.value = true
   try {
     const data = await signals.scan()
-    showToast(`扫描完成: ${data.saved}只`)
-    refresh()
+    if (data.ok) {
+      showToast(`扫描完成: ${data.saved || 0}只`)
+      refresh()
+    } else {
+      showToast(data.error || '扫描无结果')
+    }
   } catch {
     showToast('扫描失败')
   }

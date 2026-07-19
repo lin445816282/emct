@@ -15,9 +15,9 @@ def generate_candidates(n_iter: int = 200) -> list[dict]:
     """生成候选权重组合：当前权重/等权/单因子主导/随机采样"""
     candidates = []
 
-    # 当前权重
-    from analyzer import WEIGHTS
-    candidates.append(dict(WEIGHTS))
+    # 当前权重（从 DB 读取，确保与策略配置同步）
+    from strategy_config import get_weights as _gw
+    candidates.append(_gw())
 
     # 等权
     eq = {k: 1/6 for k in FACTOR_NAMES}
@@ -126,10 +126,9 @@ def evaluate_weights(
 def optimize_weights(
     n_iter: int = 200,
     max_stocks: int = 15,
+    current_weights: Optional[dict] = None,
 ) -> dict:
     """搜索最优权重组合"""
-    from analyzer import WEIGHTS as current_weights
-
     candidates = generate_candidates(n_iter)
     results = []
 
@@ -148,7 +147,7 @@ def optimize_weights(
             best = result
 
         # 标记当前权重
-        if w == current_weights:
+        if current_weights and w == current_weights:
             current_result = result
 
     # 按 score 排序

@@ -18,6 +18,9 @@ def _get_risk_config() -> dict:
         "max_positions": cfg["max_positions"],
         "min_strength": cfg["min_strength"],
         "max_hold_days": cfg["max_hold_days"],
+        "circuit_breaker_pct": cfg.get("circuit_breaker_pct", -15),
+        "caution_drawdown_pct": cfg.get("caution_drawdown_pct", -7),
+        "caution_factor": cfg.get("caution_factor", 0.6),
     }
 
 

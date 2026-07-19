@@ -128,13 +128,10 @@ def update_weights(weights: dict):
     for k, v in weights.items():
         if k in WEIGHTS:
             WEIGHTS[k] = round(v / total, 4)
-    # 持久化到 DB
+    # 持久化到 DB（仅更新 weights，其他字段保留）
     try:
-        from strategy_config import save_config
-        cfg = {}
-        try:
-            from strategy_config import get_config; cfg = get_config()
-        except: pass
+        from strategy_config import save_config, get_config
+        cfg = get_config()
         cfg["weights"] = {k: round(v, 3) for k, v in WEIGHTS.items()}
         save_config(cfg)
     except Exception as e:

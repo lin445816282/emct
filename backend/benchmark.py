@@ -111,11 +111,8 @@ def market_regime_ok() -> tuple[bool, str, float]:
     above_ma60 = latest > ma60
 
     if not above_ma20 and not above_ma60:
-        try:
-            from strategy_config import get_bear_factor
-            bf = get_bear_factor()
-        except Exception:
-            bf = 0.5
+        from strategy_config import get_bear_factor
+        bf = get_bear_factor()
         return True, f"🐻 熊市轻仓（¥{latest:.0f} < MA20 ¥{ma20:.0f} & MA60 ¥{ma60:.0f}），仓位×{bf*100:.0f}%", bf
 
     if above_ma20 and above_ma60:
