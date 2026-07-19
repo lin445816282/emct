@@ -240,9 +240,9 @@ def execute_buy(order_id: int, skip_time_check: bool = False, use_open: bool = F
     else:
         db.execute(
             """INSERT INTO positions (code, name, volume, avg_cost, current_price,
-               market_value, profit_loss, profit_loss_pct, sim_mode, buy_date)
-               VALUES (?,?,?,?,?,?,?,?,1,?)""",
-            (code, name, volume, price, price, amount, 0, 0, datetime.now().strftime("%Y-%m-%d"))
+               market_value, profit_loss, profit_loss_pct, peak_price, sim_mode, buy_date)
+               VALUES (?,?,?,?,?,?,?,?,?,1,?)""",
+            (code, name, volume, price, price, amount, 0, 0, price, datetime.now().strftime("%Y-%m-%d"))
         )    # 交易日志
     db.execute(
         """INSERT INTO trade_log (order_id, code, action, price, volume, sim_mode)
@@ -458,11 +458,16 @@ def refresh_prices() -> dict:
         mv = round(price * pos["volume"], 2)
         pnl = round(pos["volume"] * (price - pos["avg_cost"]), 2)
         pnl_pct = round((price - pos["avg_cost"]) / pos["avg_cost"] * 100, 2) if pos["avg_cost"] else 0
+        
+        # 更新最高价（移动止损用）
+        old_peak = pos["peak_price"] or 0
+        new_peak = max(old_peak, price)
+        
         db.execute(
             """UPDATE positions SET current_price=?, market_value=?,
-               profit_loss=?, profit_loss_pct=?,
+               profit_loss=?, profit_loss_pct=?, peak_price=?,
                updated_at=datetime('now','localtime') WHERE id=?""",
-            (price, mv, pnl, pnl_pct, pos["id"])
+            (price, mv, pnl, pnl_pct, new_peak, pos["id"])
         )
         updated += 1
 
@@ -505,13 +510,20 @@ def auto_stop_check() -> dict:
             (price, mv, pnl, pnl_pct, pos["id"])
         )
 
-        # 止损 / 止盈（从策略配置读取）
+        # 止损 / 止盈 / 移动止损（从策略配置读取）
         risk = _get_risk_params()
         trigger = None
         if pnl_pct <= risk["stop_loss_pct"]:
             trigger = f"止损 {pnl_pct}%"
         elif pnl_pct >= risk["take_profit_pct"]:
             trigger = f"止盈 {pnl_pct}%"
+        else:
+            # 移动止损：从最高点回撤超过阈值
+            peak = pos["peak_price"] or 0
+            trailing = risk.get("trailing_stop_pct", 3)
+            if peak > 0 and price < peak * (1 - trailing / 100):
+                from_peak = round((peak - price) / peak * 100, 2)
+                trigger = f"移动止损 (高点¥{peak:.2f}, 回撤{from_peak}%)"
 
         if trigger:
             # 创建卖出订单并立即执行
@@ -688,8 +700,9 @@ def auto_exit_check() -> dict:
             except:
                 pass
 
-        # 止损/止盈（从策略配置读取）
+        # 止损/止盈/移动止损（从策略配置读取）
         risk = _get_risk_params()
+        trailing = risk.get("trailing_stop_pct", 3)
         if pnl_pct <= risk["stop_loss_pct"]:
             trigger = f"止损 {pnl_pct}%"
         elif pnl_pct >= risk["take_profit_pct"]:
@@ -886,12 +899,16 @@ def auto_trade_from_signals() -> dict:
             continue
         price = float(price_row["close"])
 
-        # 仓位计算
+        # 仓位计算：风险预算公式
+        # 单笔风险金额 = 可用资金 × risk_per_trade_pct%
+        # 止损距离 = abs(stop_loss_pct)%
+        # 仓位股数 = round(风险金额 / (价格 × 止损距离/100) / 100) × 100
         vol = get_volatility(code)
         vol_factor = min(1.5, max(0.3, 0.30 / vol)) if vol is not None else 1.0
-        risk = _get_risk_params()
-        trade_amount = min(cash * 0.2, risk["max_single_amount"]) * vol_factor * drawdown_factor * bear_factor
-        volume = max(100, int(trade_amount / price / 100) * 100)
+        stop_distance = abs(risk["stop_loss_pct"]) / 100  # e.g., 0.08
+        risk_amount = cash * (risk["risk_per_trade_pct"] / 100) * vol_factor * drawdown_factor * bear_factor
+        max_shares = int(risk_amount / (price * stop_distance) / 100) * 100 if stop_distance > 0 else int(cash * 0.2 / price / 100) * 100
+        volume = max(100, min(max_shares, int(cash * 0.3 / price / 100) * 100))  # 上限30%仓位
         amount = round(price * volume, 2)
 
         if cash < amount:
@@ -1023,10 +1040,12 @@ def auto_trade_open(date: str = None) -> dict:
             continue
         price = float(open_row["open"])
 
-        # 计算仓位置（简化：不复用波动率因子，直接用固定公式）
+        # 仓位计算：风险预算（与 auto_trade 一致）
         risk = _get_risk_params()
-        trade_amount = min(cash * 0.2, risk["max_single_amount"]) * drawdown_factor * bear_factor
-        volume = max(100, int(trade_amount / price / 100) * 100)
+        stop_distance = abs(risk["stop_loss_pct"]) / 100
+        risk_amount = cash * (risk.get("risk_per_trade_pct", 2) / 100) * drawdown_factor * bear_factor
+        max_shares = int(risk_amount / (price * stop_distance) / 100) * 100 if stop_distance > 0 else int(cash * 0.2 / price / 100) * 100
+        volume = max(100, min(max_shares, int(cash * 0.3 / price / 100) * 100))
         amount = round(price * volume, 2)
 
         if cash < amount:

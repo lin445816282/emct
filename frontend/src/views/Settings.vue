@@ -112,6 +112,14 @@
               <van-slider v-model="cfg.take_profit_pct" :min="5" :max="30" :step="1" bar-height="4px" />
             </div>
             <div class="slider-item">
+              <div class="slider-label"><span>📉 移动止损</span><span class="w-pct">{{ cfg.trailing_stop_pct }}%</span></div>
+              <van-slider v-model="cfg.trailing_stop_pct" :min="1" :max="10" :step="1" bar-height="4px" />
+            </div>
+            <div class="slider-item">
+              <div class="slider-label"><span>🎲 单笔风险</span><span class="w-pct">{{ cfg.risk_per_trade_pct }}%</span></div>
+              <van-slider v-model="cfg.risk_per_trade_pct" :min="0.5" :max="5" :step="0.5" bar-height="4px" />
+            </div>
+            <div class="slider-item">
               <div class="slider-label"><span>📅 持仓天数</span><span class="w-pct">{{ cfg.max_hold_days }}天</span></div>
               <van-slider v-model="cfg.max_hold_days" :min="3" :max="20" :step="1" bar-height="4px" />
             </div>
@@ -329,7 +337,7 @@ const optResult = ref(null)
 const cfg = ref({
   thresholds: { strong_buy: 28, buy: 10, sell: -10, strong_sell: -28 },
   bear_factor: 0.5, max_positions: 8, min_strength: 10,
-  max_single_amount: 5000, stop_loss_pct: -8, take_profit_pct: 15, max_hold_days: 10,
+  max_single_amount: 5000, stop_loss_pct: -8, take_profit_pct: 15, trailing_stop_pct: 3, risk_per_trade_pct: 2, max_hold_days: 10,
   circuit_breaker_pct: -15, caution_drawdown_pct: -7, caution_factor: 0.6
 })
 

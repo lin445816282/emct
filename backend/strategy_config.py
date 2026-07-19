@@ -17,6 +17,7 @@ DEFAULTS = {
     "stop_loss_pct": -8,
     "take_profit_pct": 15,
     "trailing_stop_pct": 3,  # 移动止损：从最高点回撤3%触发卖出
+    "risk_per_trade_pct": 2,  # 单笔风险比例（%），决定仓位大小
     "max_hold_days": 10,
     "circuit_breaker_pct": -15,  # 组合回撤熔断线（负数，如 -15 表示亏 15% 停开仓）
     "caution_drawdown_pct": -7,   # 回撤警告线（负数，触及减半仓位）
@@ -135,6 +136,8 @@ def get_risk_params() -> dict:
     return {
         "stop_loss_pct": cfg["stop_loss_pct"],
         "take_profit_pct": cfg["take_profit_pct"],
+        "trailing_stop_pct": cfg.get("trailing_stop_pct", 3),
+        "risk_per_trade_pct": cfg.get("risk_per_trade_pct", 2),
         "max_hold_days": cfg["max_hold_days"],
         "max_single_amount": cfg["max_single_amount"],
         "min_strength": cfg["min_strength"],
@@ -161,6 +164,8 @@ def get_config_snapshot() -> str:
         "max_single_amount": cfg["max_single_amount"],
         "stop_loss_pct": cfg["stop_loss_pct"],
         "take_profit_pct": cfg["take_profit_pct"],
+        "trailing_stop_pct": cfg.get("trailing_stop_pct", 3),
+        "risk_per_trade_pct": cfg.get("risk_per_trade_pct", 2),
         "max_hold_days": cfg["max_hold_days"],
         "circuit_breaker_pct": cfg.get("circuit_breaker_pct", -15),
         "caution_drawdown_pct": cfg.get("caution_drawdown_pct", -7),
