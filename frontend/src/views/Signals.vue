@@ -21,7 +21,7 @@
             >
               <template #desc>
                 <van-tag :type="typeColor(s.signal_type)" size="small">{{ signalLabel(s.signal_type) }}</van-tag>
-                <span class="score">评分 {{ s.strength || s.score }}<template v-if="s.rank_score !== undefined">｜综合 {{ s.rank_score }}</template></span>
+                <span class="score">评分 {{ formatScore(s.strength || s.score) }}<template v-if="s.rank_score !== undefined">｜综合 {{ formatScore(s.rank_score) }}</template></span>
                 <span class="hist-badge" v-if="s.has_history && s.hist_stats">
                   🏆 胜率{{ s.hist_stats.win_rate }}% · PF{{ s.hist_stats.profit_factor }}
                 </span>
@@ -274,6 +274,7 @@ function signalLabel(t) {
   return { strong_buy: '强烈买入', buy: '买入', hold: '持有', sell: '卖出', strong_sell: '强烈卖出' }[t] || t
 }
 function statusColor(s) { return s === 'confirmed' ? 'success' : s === 'executed' ? 'primary' : 'warning' }
+function formatScore(v) { const n = parseFloat(v); return isNaN(n) ? v : n.toFixed(1) }
 </script>
 
 <style scoped>
