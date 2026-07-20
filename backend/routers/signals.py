@@ -21,7 +21,16 @@ def scan_signals():
     # 先清除今天的未处理信号，避免重复
     db.execute("DELETE FROM signals WHERE date=date('now','localtime') AND status='pending'")
     saved = 0
+    skipped = 0
     for r in results:
+        # 跳过今天已有 non-pending 信号（queued/executed/expired），保持原状态
+        existing = db.execute(
+            "SELECT status FROM signals WHERE code=? AND date=date('now','localtime') AND status!='pending'",
+            (r["code"],)
+        ).fetchone()
+        if existing:
+            skipped += 1
+            continue
         db.execute(
             """INSERT INTO signals (code, name, date, signal_type, strength, score, reason, price_ref, status)
                VALUES (?,?,date('now','localtime'),?,?,?,?,?,'pending')""",
@@ -35,6 +44,7 @@ def scan_signals():
     return {
         "scanned": len(results),
         "saved": saved,
+        "skipped": skipped,
         "signals": results,
         "summary": {
             "strong_buy": sum(1 for r in results if r["signal_type"] == "strong_buy"),

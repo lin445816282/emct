@@ -3,10 +3,10 @@
     <!-- 统计卡片 -->
     <div class="stat-cards">
       <div class="stat-card">
-        <div class="card-val" :class="stats.total_pnl >= 0 ? 'up' : 'down'">
-          ¥{{ fmt(stats.total_pnl) }}
+        <div class="card-val" :class="(stats.total_pnl_all !== undefined ? stats.total_pnl_all : stats.total_pnl) >= 0 ? 'up' : 'down'">
+          ¥{{ fmt(stats.total_pnl_all !== undefined ? stats.total_pnl_all : stats.total_pnl) }}
         </div>
-        <div class="card-label">总盈亏</div>
+        <div class="card-label">总盈亏<span v-if="stats.open_pnl !== undefined" style="font-size:10px;color:#999">（含浮动）</span></div>
       </div>
       <div class="stat-card">
         <div class="card-val">{{ displayWinRate }}</div>
@@ -23,6 +23,8 @@
     </div>
 
     <div class="sub-stats">
+      <div class="sub-row"><span>已实现盈亏</span><span class="val" :class="stats.total_pnl >= 0 ? 'up' : 'down'">¥{{ fmt(stats.total_pnl) }}</span></div>
+      <div v-if="stats.open_pnl !== undefined" class="sub-row"><span>浮动盈亏</span><span class="val" :class="stats.open_pnl >= 0 ? 'up' : 'down'">{{ stats.open_pnl >=0 ? '+' : '' }}¥{{ fmt(stats.open_pnl) }}</span></div>
       <div class="sub-row"><span>平均盈亏</span><span class="val" :class="stats.avg_pnl_pct >= 0 ? 'up' : 'down'">{{ stats.avg_pnl_pct }}%</span></div>
       <div class="sub-row"><span>平均持仓</span><span class="val">{{ stats.avg_hold_days }}天</span></div>
       <div class="sub-row"><span>最佳单笔</span><span class="val up">¥{{ fmt(stats.best_trade) }}</span></div>

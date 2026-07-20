@@ -44,7 +44,8 @@
     <van-loading v-if="loading" style="display:flex;justify-content:center;padding:40px" />
     <van-empty v-else-if="!displayList.length" :description="simStore.enabled ? '暂无模拟持仓，先去订单页下单' : '暂无持仓'" />
 
-    <van-card v-for="p in displayList" :key="p.id" :title="p.name" :desc="p.code">
+    <div v-for="p in displayList" :key="p.id" style="cursor:pointer" @click="openKline(p)">
+    <van-card :title="p.name" :desc="p.code">
       <template #price>
         <div class="pos-detail">
           <span>成本 ¥{{ fmt(p.avg_cost) }} | 现价 ¥{{ fmt(p.current_price) }}</span>
@@ -62,6 +63,7 @@
         </div>
       </template>
     </van-card>
+    </div>
 
     <!-- 卖出弹窗 -->
     <van-dialog v-model:show="sellShow" title="卖出确认" show-cancel-button @confirm="doSell">
@@ -76,6 +78,20 @@
         </div>
       </div>
     </van-dialog>
+
+    <!-- K线弹窗 -->
+    <van-popup v-model:show="klineShow" position="bottom" :style="{ height: '65%' }" round>
+      <div class="kline-header">
+        <span class="kline-title">{{ klineStock?.name }} {{ klineStock?.code }}</span>
+        <div class="kline-tabs">
+          <span :class="['tab-btn', { active: klineTab === 'daily' }]" @click="switchTab('daily')">日K</span>
+          <span :class="['tab-btn', { active: klineTab === 'intraday' }]" @click="switchTab('intraday')">分时</span>
+        </div>
+        <van-icon name="cross" size="18" @click="klineShow = false" />
+      </div>
+      <div v-if="klineLoading" style="text-align:center;padding:40px"><van-loading /></div>
+      <div v-else ref="klineChartRef" class="kline-chart"></div>
+    </van-popup>
   </div>
 </template>
 
@@ -102,7 +118,16 @@ const sellTarget = ref(null)
 const sellVolume = ref(100)
 
 const chartRef = ref(null)
+const klineChartRef = ref(null)
 let chart = null
+let klineChart = null
+
+// K线弹窗
+const klineShow = ref(false)
+const klineStock = ref(null)
+const klineLoading = ref(false)
+const klineTab = ref('daily')
+let klineData = null  // 缓存日K数据，切换回日K时不用重新加载
 
 onMounted(refresh)
 watch(() => simStore.enabled, refresh)
@@ -144,6 +169,136 @@ async function doSell() {
       showToast(result.error || '卖出失败')
     }
   } catch { showToast('网络错误') }
+}
+
+async function openKline(p) {
+  klineStock.value = p
+  klineTab.value = 'daily'
+  klineShow.value = true
+  klineLoading.value = true
+  klineData = null
+  try {
+    const res = await fetch(`/emct/api/data/kline/${p.code}?limit=60`).then(r => r.json())
+    klineData = res.rows || []
+    klineLoading.value = false
+    await nextTick()
+    renderKline(klineData)
+  } catch { showToast('加载失败'); klineLoading.value = false }
+}
+
+async function switchTab(tab) {
+  klineTab.value = tab
+  if (tab === 'daily' && klineData) {
+    klineLoading.value = false
+    await nextTick()
+    renderKline(klineData)
+    return
+  }
+  if (tab === 'intraday') {
+    klineLoading.value = true
+    try {
+      const res = await fetch(`/emct/api/data/intraday/${klineStock.value.code}`).then(r => r.json())
+      klineLoading.value = false
+      await nextTick()
+      renderIntraday(res.rows || [])
+    } catch { showToast('加载失败'); klineLoading.value = false }
+  }
+}
+
+function renderIntraday(rows) {
+  if (!klineChartRef.value || !rows.length) return
+  if (klineChart) klineChart.dispose()
+  klineChart = echarts.init(klineChartRef.value)
+
+  const times = rows.map(r => r.time.slice(0, 5))
+  const closes = rows.map(r => r.close)
+  const volumes = rows.map(r => r.volume)
+  const prevClose = rows[0]?.open || closes[0]
+
+  klineChart.setOption({
+    tooltip: { trigger: 'axis' },
+    grid: [
+      { left: '8%', right: '3%', top: '5%', height: '60%' },
+      { left: '8%', right: '3%', top: '72%', height: '20%' },
+    ],
+    xAxis: [
+      { type: 'category', data: times, gridIndex: 0, axisLabel: { fontSize: 10, interval: 11 } },
+      { type: 'category', data: times, gridIndex: 1, axisLabel: { show: false } },
+    ],
+    yAxis: [
+      { type: 'value', gridIndex: 0, scale: true, splitLine: { lineStyle: { color: '#f0f0f0' } } },
+      { type: 'value', gridIndex: 1, axisLabel: { show: false } },
+    ],
+    series: [
+      {
+        name: '价格', type: 'line', data: closes, smooth: true,
+        lineStyle: { width: 2, color: '#2979ff' },
+        areaStyle: { color: { type: 'linear', x: 0, y: 0, x2: 0, y2: 1,
+          colorStops: [{ offset: 0, color: 'rgba(41,121,255,0.25)' }, { offset: 1, color: 'rgba(41,121,255,0.02)' }] } },
+        symbol: 'none', xAxisIndex: 0, yAxisIndex: 0,
+        markLine: { silent: true, data: [{ yAxis: prevClose, lineStyle: { color: '#999', type: 'dashed' } }] }
+      },
+      {
+        name: '成交量', type: 'bar', data: volumes,
+        itemStyle: { color: params => {
+          const idx = params.dataIndex
+          return idx > 0 && closes[idx] >= closes[idx-1] ? '#ef5350' : '#26a69a'
+        }},
+        xAxisIndex: 1, yAxisIndex: 1,
+      },
+    ],
+  })
+}
+
+function renderKline(rows) {
+  if (!klineChartRef.value || !rows.length) return
+  if (klineChart) klineChart.dispose()
+  klineChart = echarts.init(klineChartRef.value)
+
+  const dates = rows.map(r => r.date)
+  const ohlc = rows.map(r => [r.open, r.close, r.low, r.high])
+  const volumes = rows.map(r => r.volume)
+  const closes = rows.map(r => r.close)
+
+  // 计算MA
+  function ma(data, n) {
+    return data.map((_, i) => {
+      if (i < n - 1) return null
+      const v = data.slice(i - n + 1, i + 1).reduce((a, b) => a + b, 0) / n
+      return Math.round(v * 100) / 100
+    })
+  }
+
+  klineChart.setOption({
+    tooltip: { trigger: 'axis', axisPointer: { type: 'cross' } },
+    grid: [
+      { left: '8%', right: '3%', top: '5%', height: '60%' },
+      { left: '8%', right: '3%', top: '72%', height: '20%' },
+    ],
+    xAxis: [
+      { type: 'category', data: dates, gridIndex: 0, axisLabel: { fontSize: 10 }, boundaryGap: true },
+      { type: 'category', data: dates, gridIndex: 1, axisLabel: { show: false }, boundaryGap: true },
+    ],
+    yAxis: [
+      { type: 'value', gridIndex: 0, scale: true, splitLine: { lineStyle: { color: '#f0f0f0' } } },
+      { type: 'value', gridIndex: 1, axisLabel: { show: false } },
+    ],
+    series: [
+      {
+        name: 'K线', type: 'candlestick', data: ohlc,
+        itemStyle: { color: '#ef5350', color0: '#26a69a', borderColor: '#ef5350', borderColor0: '#26a69a' },
+        xAxisIndex: 0, yAxisIndex: 0,
+      },
+      { name: 'MA5', type: 'line', data: ma(closes, 5), smooth: true, lineStyle: { width: 1, color: '#ff9800' }, symbol: 'none', xAxisIndex: 0, yAxisIndex: 0 },
+      { name: 'MA10', type: 'line', data: ma(closes, 10), smooth: true, lineStyle: { width: 1, color: '#2196f3' }, symbol: 'none', xAxisIndex: 0, yAxisIndex: 0 },
+      { name: 'MA20', type: 'line', data: ma(closes, 20), smooth: true, lineStyle: { width: 1, color: '#9c27b0' }, symbol: 'none', xAxisIndex: 0, yAxisIndex: 0 },
+      {
+        name: '成交量', type: 'bar', data: volumes,
+        itemStyle: { color: params => params.data >= (params.dataIndex > 0 ? volumes[params.dataIndex - 1] : 0) ? '#ef5350' : '#26a69a' },
+        xAxisIndex: 1, yAxisIndex: 1,
+      },
+    ],
+  })
 }
 
 function renderPie() {
@@ -204,4 +359,17 @@ function fmt(v) { return (v || 0).toLocaleString('zh-CN', { minimumFractionDigit
 .chart-card { background: #fff; border-radius: 8px; padding: 10px 8px; margin-bottom: 12px; }
 .chart-title { font-size: 13px; font-weight: 600; color: #333; margin-bottom: 6px; }
 .pie-chart { width: 100%; height: 220px; }
+
+/* K线弹窗 */
+.kline-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 16px 8px; font-size: 15px; font-weight: 600;
+}
+.kline-tabs { display: flex; gap: 4px; }
+.tab-btn {
+  padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 500;
+  background: #f0f0f0; color: #666; cursor: pointer;
+}
+.tab-btn.active { background: #1989fa; color: #fff; }
+.kline-chart { width: 100%; height: calc(65vh - 100px); }
 </style>

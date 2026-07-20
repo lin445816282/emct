@@ -30,6 +30,25 @@
       </div>
     </div>
 
+    <!-- 股票池扫描统计 -->
+    <div class="pool-card" v-if="pool.total">
+      <div class="pool-title">📊 股票池</div>
+      <div class="pool-grid">
+        <div class="pool-item">
+          <span class="pool-num">{{ pool.total }}</span>
+          <span class="pool-label">只标的</span>
+        </div>
+        <div class="pool-item">
+          <span class="pool-num">{{ pool.active }}</span>
+          <span class="pool-label">已启用</span>
+        </div>
+        <div class="pool-item" v-if="pool.last_sync">
+          <span class="pool-num">{{ pool.last_sync.slice(5) }}</span>
+          <span class="pool-label">数据至</span>
+        </div>
+      </div>
+    </div>
+
     <!-- 今日信号摘要 -->
     <div class="section">
       <div class="sec-title" @click="$router.push('/signals')">
@@ -119,6 +138,7 @@ const acct = ref({ cash: 0, market_value: 0, total_pnl: 0, total_value: 0, initi
 const signals = ref([])
 const recentOrders = ref([])
 const marketRegime = ref(null)
+const pool = ref({ total: 0, active: 0, last_sync: '' })
 
 const pnlPct = computed(() => {
   const pnl = acct.value.total_pnl || 0
@@ -160,16 +180,18 @@ function fmtDate(d) {
 onMounted(async () => {
   // 并行加载
   try {
-    const [ar, sr, or_, mr] = await Promise.all([
+    const [ar, sr, or_, mr, pr] = await Promise.all([
       fetch('/emct/api/sim/account').then(r => r.json()),
       fetch('/emct/api/signals?status=pending').then(r => r.json()),
       fetch('/emct/api/sim/orders?limit=5').then(r => r.json()),
       fetch('/emct/api/sim/market-regime').then(r => r.json()),
+      fetch('/emct/api/stock-pool/count').then(r => r.json()),
     ])
     acct.value = ar
     signals.value = (sr.signals || sr.rows || sr || []).filter(s => s.status === 'pending')
     recentOrders.value = (or_.rows || []).filter(o => o.order_status === 'filled').slice(0, 5)
     marketRegime.value = mr
+    pool.value = pr
   } catch {}
 })
 </script>
@@ -223,6 +245,16 @@ onMounted(async () => {
 
 /* 快速操作 */
 .quick-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* 股票池卡片 */
+.pool-card {
+  background: #fff; border-radius: 12px; padding: 14px; box-shadow: 0 1px 3px rgba(0,0,0,.04);
+}
+.pool-title { font-size: 13px; font-weight: 600; color: #333; margin-bottom: 10px; }
+.pool-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+.pool-item { text-align: center; }
+.pool-num { font-size: 22px; font-weight: 700; color: #1989fa; display: block; }
+.pool-label { font-size: 11px; color: #999; }
 
 /* 空状态 */
 .empty-hint { font-size: 12px; color: #bbb; text-align: center; padding: 12px 0; cursor: pointer; }

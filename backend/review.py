@@ -69,7 +69,7 @@ def _create_trade_from_order(order: dict):
 
 
 def get_stats() -> dict:
-    """获取整体交易统计"""
+    """获取整体交易统计（含未平仓浮动盈亏）"""
     db = get_db()
     stats = db.execute("""
         SELECT
@@ -94,6 +94,9 @@ def get_stats() -> dict:
     losses = result.get("losses", 0) or 0
     breakeven = result.get("breakeven", 0) or 0
 
+    # 计算未平仓浮动盈亏
+    open_pnl = _calc_open_pnl(db)
+
     # 胜率区分显示
     if closed == 0:
         display_win_rate = "--"
@@ -101,13 +104,67 @@ def get_stats() -> dict:
         display_win_rate = "平盘"
     else:
         display_win_rate = f"{round(wins / closed * 100, 1)}%"
-    
+
     result["win_rate"] = display_win_rate
     result["win_rate_num"] = round(wins / closed * 100, 1) if closed > 0 else 0
     result["profit_factor"] = _calc_profit_factor(db) if closed > 0 else 0
+    result["open_pnl"] = open_pnl  # 未平仓浮动盈亏
+    result["total_pnl_all"] = result["total_pnl"] + open_pnl  # 含浮动
 
     db.close()
     return result
+
+
+def _calc_open_pnl(db) -> float:
+    """计算所有未平仓的浮动盈亏（用新浪实时价）"""
+    open_trades = db.execute("""
+        SELECT tl.code, tl.price, tl.volume
+        FROM trade_log tl
+        WHERE tl.action='open'
+          AND tl.code NOT IN (
+              SELECT code FROM trade_log WHERE action='close'
+          )
+        GROUP BY tl.code
+        HAVING SUM(tl.volume) > 0
+    """).fetchall()
+
+    if not open_trades:
+        return 0.0
+
+    # 批量获取实时价格
+    codes = [r["code"] for r in open_trades]
+    prices = _get_sina_prices(codes)
+
+    total_pnl = 0.0
+    for t in open_trades:
+        cur = prices.get(t["code"], t["price"])
+        total_pnl += (cur - t["price"]) * t["volume"]
+    return round(total_pnl, 2)
+
+
+def _get_sina_prices(codes: list) -> dict:
+    """新浪批量获取实时价 → {code: price}"""
+    try:
+        import urllib.request
+        sina_codes = [("sh" if c.startswith("6") else "sz") + c for c in codes]
+        url = "http://hq.sinajs.cn/list=" + ",".join(sina_codes)
+        req = urllib.request.Request(url, headers={"Referer": "https://finance.sina.com.cn"})
+        resp = urllib.request.urlopen(req, timeout=5)
+        prices = {}
+        for line in resp.read().decode("gbk", errors="ignore").strip().split("\n"):
+            if "=" not in line: continue
+            raw = line.split('"')[1] if '"' in line else ""
+            parts = raw.split(",")
+            if len(parts) < 4: continue
+            try:
+                price = float(parts[3])
+                if price > 0:
+                    key = line.split("=")[0].replace("var hq_str_", "")
+                    prices[key[2:]] = price  # 去 sh/sz 前缀
+            except (ValueError, IndexError): continue
+        return prices
+    except Exception:
+        return {}
 
 
 def _calc_profit_factor(db) -> float:

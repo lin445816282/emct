@@ -4,6 +4,17 @@ from database import get_db
 
 router = APIRouter(prefix="/stock-pool", tags=["stock-pool"])
 
+@router.get("/count")
+def pool_count():
+    """股票池计数 + 最近同步时间"""
+    db = get_db()
+    total = db.execute("SELECT COUNT(*) FROM stock_pool").fetchone()[0]
+    active = db.execute("SELECT COUNT(*) FROM stock_pool WHERE active=1").fetchone()[0]
+    # 最近同步时间
+    sync = db.execute("SELECT MAX(date) FROM daily_kline").fetchone()[0]
+    db.close()
+    return {"total": total, "active": active, "last_sync": sync}
+
 @router.get("")
 def list_pool(sector: str = "", active: int = None):
     db = get_db()
